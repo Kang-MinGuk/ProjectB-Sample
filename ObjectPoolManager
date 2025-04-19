@@ -1,0 +1,1077 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using System;
+using System.Linq;
+
+public class ObjectPoolManager : MonoBehaviour
+{
+    public static ObjectPoolManager instance = null;
+    public Transform objectPoolManager = null;
+    private int objectPoolPanelCount = 101;
+    private Dictionary<string, int> objectPoolPanelDatas = new Dictionary<string, int>();
+
+    public List<Monster> playerMonsterList = new List<Monster>();
+    public List<Monster> enemyMonsterList = new List<Monster>();
+
+    void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+        else if (instance != this)
+        {
+            Destroy(gameObject);
+        }
+    }
+    void OnDestroy()
+    {
+        instance = null;
+    }
+
+    public List<GameObject> delListNextFrame = new List<GameObject>();
+
+    private void Update()
+    {
+        if (BattleManager.instance.isPause == true || Battle_single.instance.GetTutorialPause())
+            return;
+
+        PoolActiveCheck();
+    }
+
+    private void PoolActiveCheck()
+    {
+        foreach (var item in dicPool)
+        {
+            List<RappingGameObject> PoolList = item.Value;
+            for (int i = 0; i < PoolList.Count; ++i)
+            {
+                if (PoolList[i].obj == null) //풀이 안지운애. (다른곳에서 소멸했다)
+                {
+                    PoolList.Remove(PoolList[i]);
+                    continue;
+                }
+
+                if (!PoolList[i].obj.activeSelf)
+                    continue;
+
+                if (!PoolList[i].bActiveCheck)
+                    continue;
+
+                if (!PoolList[i].obj.transform.parent.gameObject.activeSelf)
+                    continue;
+
+                if (!PoolList[i].obj.transform.parent.parent.gameObject.activeSelf)
+                    continue;
+
+                bool isLive = false;
+
+                bool bAllNull = true;
+
+                if (PoolList[i].ps)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].ps.isPlaying)
+                        isLive = true;
+                }
+                if (PoolList[i].ta)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].ta.isActiveAndEnabled)
+                        isLive = true;
+                }
+                if (PoolList[i].tp)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].tp.isActiveAndEnabled)
+                        isLive = true;
+                }
+                if (PoolList[i].ts)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].ts.isActiveAndEnabled)
+                        isLive = true;
+                }
+                if (PoolList[i].tr)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].tr.isActiveAndEnabled)
+                        isLive = true;
+                }
+
+                if (PoolList[i].anim)
+                {
+                    bAllNull = false;
+                    if (PoolList[i].anim.GetCurrentAnimatorStateInfo(0).normalizedTime < 1.0f)
+                        isLive = true;
+                }
+
+                if (PoolList[i].parantobj != null)
+                {
+                    if (PoolList[i].mon)
+                    {
+                        bAllNull = false;
+                        if (PoolList[i].mon.isfield == true || PoolList[i].mon.gameObject.activeSelf == true)
+                        {
+                            isLive = true;
+                        }
+                    }
+                }
+
+                //아무것도 검사하지않았다. 소멸 조건이 없는경우 (다른데서 소멸해줘야되는 애들)
+                if (bAllNull == true)
+                {
+                }
+                else if (isLive == false)
+                {
+                    if (PoolList[i].obj.GetComponent<CollisionObject>() && PoolList[i].obj.GetComponent<CollisionObject>().isLife == true)
+                        continue;
+
+                    PoolList[i].obj.SetActive(false);
+                }
+            }
+        }
+    }
+
+    public void SwitchParent(Transform _parent)
+    {
+        MissilePoolObject.transform.parent.parent = _parent;
+    }
+
+    static public GameObject PlayerCharacterPool = null;
+    static public GameObject EnemyCharacterPool = null;
+    private void Start()
+    {
+        MissilePoolObject = UIManager.instance.transform.Find("ObjectPool/MissilePool").gameObject; //new GameObject("MissilePool");
+        PlayerMonsterPoolObject = UIManager.instance.transform.Find("ObjectPool/CharacterPool/PlayerMonsterPool").gameObject; //new GameObject("PlayerMonsterPool");
+        EnemyMonsterPoolObject = UIManager.instance.transform.Find("ObjectPool/CharacterPool/EnemyMonsterPool").gameObject; //new GameObject("EnemyMonsterPool");
+        PlayerCharacterPool = UIManager.instance.transform.Find("ObjectPool/CharacterPool/PlayerCharacterPool").gameObject;
+        EnemyCharacterPool = UIManager.instance.transform.Find("ObjectPool/CharacterPool/EnemyCharacterPool").gameObject;
+        PoolObject = UIManager.instance.transform.Find("ObjectPool/ObjectPool").gameObject; //new GameObject("ObjectPool");
+        PoolObjectBack = UIManager.instance.transform.Find("ObjectPool/ObjectBackPool").gameObject;
+        objectPoolManager = UIManager.instance.transform.Find("ObjectPool");
+    }
+
+    public void ChangeParent(Transform trans)
+    {
+        ClearPool();
+
+        PlayerMonsterPoolObject.transform.parent.parent = trans;
+    }
+
+    public void ChangeParent_as_BackPool(Transform trans)
+    {
+        trans.parent = PoolObjectBack.transform;
+    }
+
+    static public GameObject MissilePoolObject = null;
+    public List<GameObject> MissilePoolList = new List<GameObject>();
+    public GameObject GetMissilePrefab(int id, int index = 1, bool bPoolSearch = true)
+    {
+        GameObject obj = null;
+
+        if (bPoolSearch)
+        {
+            for (int i = 0; i < MissilePoolList.Count; ++i)
+            {
+                Missile missileObj = MissilePoolList[i].GetComponent<Missile>();
+
+                if (missileObj.isLife == true)
+                    continue;
+
+                if (missileObj.IsGrardianMissile)
+                    continue;
+
+                if (id == missileObj.diceId &&
+                    missileObj.IndexId == index)
+                {
+                    return MissilePoolList[i];
+                }
+            }
+        }
+        
+        if (obj == null)
+        {
+            string missileprefabname = GameManager.instance.GetDiceTemplate(id, GameDataManager.diceTemplate_.missileprefabname);
+            if (missileprefabname == "None" || missileprefabname == "")
+                return null;
+
+            string indexnum = "0" + index.ToString();
+            if (index >= 10)
+                indexnum = index.ToString();
+
+            missileprefabname = missileprefabname.Substring(0, missileprefabname.Length - 2);
+            missileprefabname += indexnum;
+            GameObject PoolObjectParent = null;
+            if (MissilePoolObject.transform.Find(missileprefabname) == null)
+            {
+                PoolObjectParent = new GameObject(missileprefabname);
+                PoolObjectParent.transform.parent = MissilePoolObject.transform;
+                PoolObjectParent.transform.localScale = Vector3.one;
+            }
+            else
+                PoolObjectParent = MissilePoolObject.transform.Find(missileprefabname).gameObject;
+
+            obj = ProcessButton.instance.GetProjectileEffectBase(missileprefabname, PoolObjectParent.transform);
+            Missile missileObj = obj.GetComponent<Missile>();
+            missileObj.IndexId = index;
+            MissilePoolList.Add(obj);
+        }
+
+        return obj;
+    }
+
+    public GameObject GetGuardianMissilePrefab(int guardianId, int index = 1, bool bPoolSearch = true)
+    {
+        GameObject obj = null;
+        if (bPoolSearch)
+        {
+            for (int i = 0; i < MissilePoolList.Count; ++i)
+            {
+                Missile missileObj = MissilePoolList[i].GetComponent<Missile>();
+
+                if (missileObj.isLife == true)
+                    continue;
+
+                if (missileObj.IsGrardianMissile == false)
+                    continue;
+
+                if (guardianId == missileObj.GrardianMissileId &&
+                    missileObj.IndexId == index + 100)
+                {
+                    return MissilePoolList[i];
+                }
+            }
+        }
+
+        if (obj == null)
+        {
+            string missileprefabname = GameDataManager.GuardianTemplate[(int)guardianId, (int)GameDataManager.GuardianTemplate_.missilePrefab];
+
+            if (missileprefabname == "None" || missileprefabname == "")
+                return null;
+
+            GameObject PoolObjectParent = null;
+            if (MissilePoolObject.transform.Find(missileprefabname) == null)
+            {
+                PoolObjectParent = new GameObject(missileprefabname);
+                PoolObjectParent.transform.parent = MissilePoolObject.transform;
+                PoolObjectParent.transform.localScale = Vector3.one;
+            }
+            else
+                PoolObjectParent = MissilePoolObject.transform.Find(missileprefabname).gameObject;
+
+            obj = ProcessButton.instance.GetProjectileEffectBase(missileprefabname, PoolObjectParent.transform);
+            Missile missileObj = obj.GetComponent<Missile>();
+            missileObj.IndexId = index + 100;
+            MissilePoolList.Add(obj);
+        }
+
+        return obj;
+
+    }
+
+    public GameObject tempLandTargetObj = null;
+
+    public GameObject GetMissilePrefabWithWholeData(bool isme, int id, int subid, string damage, string skill1value, string missilespeed, string MakeHistory, string ownertileindex, string duration, string isLandingMissile, string landTarget_X, string landTarget_Y, string landTarget_Z, string isSideLanding, string targetobjindex, string criticalrate, string collisionRange, string isLife, string isNonTarget, string vStartPosition_X, string vStartPosition_Y, string vStartPosition_Z, string transform_position_X, string transform_position_Y, string transform_position_Z, string transform_rotation_X, string transform_rotation_Y, string transform_rotation_Z, int index = 1)
+    {
+        GameObject obj = null;
+        for (int i = 0; i < MissilePoolList.Count; ++i)
+        {
+            if (MissilePoolList[i].GetComponent<Missile>().isLife == true)
+                continue;
+
+            if (id == MissilePoolList[i].GetComponent<Missile>().diceId)
+            {
+                return MissilePoolList[i];
+            }
+        }
+
+        if (obj == null)
+        {
+            string missileprefabname = GameManager.instance.GetDiceTemplate(id, GameDataManager.diceTemplate_.missileprefabname);
+            string indexnum = "0" + index.ToString();
+            if (index >= 10)
+                indexnum = index.ToString();
+
+            missileprefabname = missileprefabname.Substring(0, missileprefabname.Length - 2);
+            missileprefabname += indexnum;
+            GameObject PoolObjectParent = null;
+            if (MissilePoolObject.transform.Find(missileprefabname) == null)
+            {
+                PoolObjectParent = new GameObject(missileprefabname);
+                PoolObjectParent.transform.parent = MissilePoolObject.transform;
+                PoolObjectParent.transform.localScale = Vector3.one;
+            }
+            else
+                PoolObjectParent = MissilePoolObject.transform.Find(missileprefabname).gameObject;
+
+            obj = ProcessButton.instance.GetProjectileEffectBase(missileprefabname, PoolObjectParent.transform);
+            obj.GetComponent<Missile>().damage = int.Parse(damage);
+            obj.GetComponent<Missile>().missilespeed = int.Parse(missilespeed);
+            obj.GetComponent<Missile>().MakeHistory = int.Parse(MakeHistory);
+
+            Vector3 playerVec = BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (7)").transform.position;
+            Vector3 enemyVec = BattleManager.instance.battleObj.transform.Find("Enemmy/Grid/slot (7)").transform.position;
+            Vector3 rotationPoint = Vector3.Lerp(playerVec, enemyVec, 0.5f);
+
+            //land target 연산
+            if (tempLandTargetObj == null)
+            {
+                tempLandTargetObj = new GameObject();
+            }
+            Transform tempTrans = tempLandTargetObj.transform;
+
+            float fLandTarget_x = float.Parse(landTarget_X);
+            float fLandTarget_y = float.Parse(landTarget_Y);
+            float fLandTarget_z = float.Parse(landTarget_Z);
+            tempTrans.position = new Vector3(fLandTarget_x, fLandTarget_y, fLandTarget_z);
+            tempTrans.RotateAround(rotationPoint, Vector3.forward, 180.0f);
+            tempTrans.Rotate(Vector3.forward, 180.0f);
+
+
+
+            float fStartPosition_x = float.Parse(vStartPosition_X);
+            float fStartPosition_y = float.Parse(vStartPosition_Y);
+            float fStartPosition_z = float.Parse(vStartPosition_Z);
+            tempTrans.position = new Vector3(fStartPosition_x, fStartPosition_y, fStartPosition_z);
+            tempTrans.RotateAround(rotationPoint, Vector3.forward, 180.0f);
+            tempTrans.Rotate(Vector3.forward, 180.0f);
+
+            obj.GetComponent<Missile>().vStartPosition = tempTrans.position;
+
+
+            if(bool.Parse(isLife) == true)
+            {
+                GameObject targetObject = monstergenerate.instance.findMonsterByMonsterIndex(isme, int.Parse(targetobjindex));
+                obj.GetComponent<Missile>().targetobj = targetObject;
+            }
+            else
+            {
+                obj.GetComponent<Missile>().targetobj = null;
+            }
+            obj.GetComponent<Missile>().isLife = bool.Parse(isLife);
+            
+            obj.GetComponent<Missile>().transform.position = new Vector3(float.Parse(transform_position_X), float.Parse(transform_position_Y), float.Parse(transform_position_Z));
+            obj.GetComponent<Missile>().transform.right = new Vector3(float.Parse(transform_rotation_X), float.Parse(transform_rotation_Y), float.Parse(transform_rotation_Z));
+
+            obj.GetComponent<Missile>().transform.RotateAround(rotationPoint, Vector3.forward, 180.0f);
+            obj.GetComponent<Missile>().transform.Rotate(Vector3.forward, 180.0f);
+
+            MissilePoolList.Add(obj);
+        }
+
+        return obj;
+    }
+
+
+    public void ClearMissilePool(bool isAbsolute = true)
+    {
+        BattleManager.instance.PlayerCureSkillTargetList.Clear();
+        BattleManager.instance.EnemyCureSkillTargetList.Clear();
+
+        if (MissilePoolList.Count == 0)
+            return;
+
+        for(int i = 0; i < MissilePoolList.Count; ++i)
+        {
+            if (isAbsolute)
+            {
+                DestroyImmediate(MissilePoolList[i]);
+                Destroy(MissilePoolList[i]);
+            }
+            else
+            {
+                MissilePoolList[i].GetComponent<Missile>().gameObject.SetActive(false);
+                MissilePoolList[i].GetComponent<Missile>().isLife = false;
+            }
+        }
+
+        if (isAbsolute)
+            MissilePoolList.Clear();
+    }
+
+    public void disableMissilePool()
+    {
+        if (MissilePoolList.Count == 0)
+            return;
+
+        for (int i = 0; i < MissilePoolList.Count; ++i)
+        {
+            if (!MissilePoolList[i].activeSelf)
+                continue;
+
+            MissilePoolList[i].GetComponent<Missile>().isLife = false;
+        }
+    }
+
+    public void disableMonsterPool(bool isMe)
+    {
+        List<RappingMonsterObject> monsterPool = isMe == true ? PlayerMonsterPoolList : EnemyMonsterPoolList;
+
+        if (monsterPool.Count == 0)
+            return;
+
+        for (int i = 0; i < monsterPool.Count; ++i)
+        {
+            if (!monsterPool[i].obj.activeSelf)
+                continue;
+
+            monsterPool[i].monster.isfield = false;
+            monsterPool[i].obj.SetActive(false);
+        }
+    }
+
+    static public GameObject PlayerMonsterPoolObject = null;
+    public List<RappingMonsterObject> PlayerMonsterPoolList = new List<RappingMonsterObject>();
+    static public GameObject EnemyMonsterPoolObject = null;
+    public List<RappingMonsterObject> EnemyMonsterPoolList = new List<RappingMonsterObject>();
+    //몬스터 많아지면 탐색 오래걸리니까 적꺼 내꺼 나눠서 관리한다
+    public RappingMonsterObject GetMonsterPrefab(bool isMe, int id, bool bPoolSearch = true)
+    {
+        List<RappingMonsterObject> objlist = isMe ? PlayerMonsterPoolList : EnemyMonsterPoolList;
+        GameObject poolobject = isMe ? PlayerMonsterPoolObject : EnemyMonsterPoolObject;
+
+        RappingMonsterObject RappingObj = null;
+
+        if (bPoolSearch)
+        {
+            for (int i = 0; i < objlist.Count; ++i)
+            {
+                if (objlist[i].monster.isfield == true || objlist[i].monster.hp > 0)
+                    continue;
+
+                return objlist[i];
+            }
+        }
+
+        if (RappingObj == null)
+        {
+            string monstername = GameManager.instance.GetMonsterTemplate(id, GameDataManager.monsterTemplate_.name);
+            GameObject PoolObjectParent = null;
+            if (poolobject.transform.Find(monstername) == null)
+            {
+                PoolObjectParent = new GameObject(monstername);
+                PoolObjectParent.transform.parent = poolobject.transform;
+                PoolObjectParent.transform.localScale = Vector3.one;
+            }
+            else
+                PoolObjectParent = poolobject.transform.Find(monstername).gameObject;
+
+            if (isMe)
+                PoolObjectParent.transform.position = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone").gameObject.transform.position;
+            else
+                PoolObjectParent.transform.position = BattleManager.instance.battleObj.transform.Find("Enemmy/MonsterZone").gameObject.transform.position;
+
+            GameObject MonObj = ProcessButton.instance.GetPrefabsBase("Dice/monster", PoolObjectParent.transform, false);
+            RappingObj = new RappingMonsterObject();
+            RappingObj.obj = MonObj;
+            RappingObj.monster = MonObj.GetComponent<Monster>();
+            objlist.Add(RappingObj);
+        }
+
+        return RappingObj;
+    }
+    public void ClearMonsterPool()
+    {
+        foreach (var item in PlayerMonsterPoolList)
+            Destroy(item.obj);
+
+        PlayerMonsterPoolList.Clear();
+
+        foreach (var item in EnemyMonsterPoolList)
+            Destroy(item.obj);
+
+        EnemyMonsterPoolList.Clear();
+
+        playerMonsterList.Clear();
+        enemyMonsterList.Clear();
+    }
+
+    public Dictionary<string, List<GameObject>> SubMissilePoolDict = new Dictionary<string, List<GameObject>>();//설치류(stream용)
+    public GameObject findSubMissile(int index)
+    {
+        GameObject FindObj = null;
+        foreach (KeyValuePair<string, List<GameObject>> temp in SubMissilePoolDict)
+        {
+            foreach (GameObject obj in temp.Value)
+            {
+                if (!obj) continue;
+
+                if (obj.GetComponent<CollisionObject>().index == index)
+                {
+                    FindObj = obj;
+                    break;
+                }
+            }
+        }
+        return FindObj;
+    }
+    public string SubMissileStream(bool JustForever = false)
+    {
+        string retVal = "";
+        Transform battleTrans = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone");
+        List<string> keys = SubMissilePoolDict.Keys.ToList();
+
+        for (int i = 0; i < keys.Count; ++i)
+        {
+            string key = keys[i];
+            var value = SubMissilePoolDict[keys[i]];
+            if (JustForever)
+            {
+                if (key != "Mine_lv02" && key != "Mine_lv01") continue;
+            }
+
+            retVal += key + "#";
+
+            for(int j=0; j < value.Count; ++j)
+            {
+                GameObject obj = value[j];
+                if (obj == null || !obj.GetComponent<CollisionObject>().isLife || !obj.gameObject.activeSelf) continue;
+                if (obj.GetComponent<CollisionObject>().index == 0) continue;
+                if (key == "Chain_lv01" || key == "Chain_lv01_magen" || key == "Chain_lv01_blue" || key == "Chain_lv04")
+                {
+                    //체인일때는 어짜피 새로 가져가니 이정도만 index는 생성될때 isme / tileindex로 판별하니 같은거 찾아서 바꾸자
+                    retVal += obj.GetComponent<CollisionObject>().index.ToString() + "`";
+
+                    retVal += obj.GetComponent<TweenRotation>().value.x.ToString() + "`";
+                    retVal += obj.GetComponent<TweenRotation>().value.y.ToString() + "`";
+                    retVal += obj.GetComponent<TweenRotation>().value.z.ToString() + "`";
+                    retVal += obj.GetComponent<TweenRotation>().value.w.ToString() + "`";
+                    retVal += obj.GetComponent<TweenRotation>().tweenFactor;
+                    retVal += "&";
+                }
+                else
+                {
+                    retVal += obj.GetComponent<CollisionObject>().isme.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().iDiceID.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().isCri.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().fDuration.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().fSpeed.ToString() + "`";
+                    //vStartPosition 는 어짜피 모션 없이 바로 뿌려줄 거니까 그냥 안가져간다                
+                    Vector3 battleLocalPosition = battleTrans.InverseTransformPoint(obj.GetComponent<CollisionObject>().transform.position);
+                    retVal += battleLocalPosition.x.ToString() + "`";
+                    retVal += battleLocalPosition.y.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().vArrivePosition.x.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().vArrivePosition.y.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().iDamage.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().iTickTime.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().DamageColor.r.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().DamageColor.g.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().DamageColor.b.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().RateDamage.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().TotalRateDamage.ToString() + "`";
+                    retVal += obj.GetComponent<CollisionObject>().index.ToString() + "`";
+                    retVal += "&";
+                }
+            }
+
+            retVal += "^";
+        }
+        return retVal;
+    }
+
+    static public GameObject PoolObject = null;
+    static public GameObject PoolObjectBack = null;
+    //public List<RappingGameObject> PoolList = new List<RappingGameObject>();
+    public Dictionary<string, List<RappingGameObject>> dicPool = new Dictionary<string, List<RappingGameObject>>();
+    //프레임 많이먹으면 EffectMaxCount 숫자 낮추기
+    
+    public GameObject GetPrefab(string prefabname, Vector3 SpawnPosition, int EffectMaxCount = 5, string key = "", bool bPoolSearch = true, bool isBackPool = false)
+    {
+        RappingGameObject firstFind = null;
+        if (key == "")
+            key = prefabname;
+
+        List<RappingGameObject> PoolList = dicPool.ContainsKey(prefabname) == false ? new List<RappingGameObject>() : dicPool[prefabname];
+
+        if (bPoolSearch)
+        {
+            for (int i = 0; i < PoolList.Count; ++i)
+            {
+                if (PoolList[i].obj == null) //오브젝트 풀이 안지운애. (다른곳에서 소멸했다)
+                {
+                    PoolList.Remove(PoolList[i]);
+                    continue;
+                }
+
+                if (!PoolList[i].bActiveCheck)
+                    continue;
+
+                if (PoolList[i].fxname == prefabname && firstFind == null)
+                {
+                    firstFind = PoolList[i];
+                }
+
+                if (PoolList[i].obj.activeSelf == true || PoolList[i].fxname != prefabname)
+                    continue;
+                else
+                {
+                    PoolList[i].init(SpawnPosition, null, isBackPool);
+                    return PoolList[i].obj;
+                }
+            }
+        }        
+        
+        GameObject PoolObjectParent = null;
+        GameObject SearchObjectPool = isBackPool ? PoolObjectBack : PoolObject;
+        if (SearchObjectPool.transform.Find(key) == null)
+        {
+            PoolObjectParent = new GameObject(key);
+            PoolObjectParent.transform.parent = SearchObjectPool.transform;
+            PoolObjectParent.transform.localScale = Vector3.one;
+            PoolObjectParent.layer = 5;
+        }
+        else
+        {
+            if (firstFind != null && SearchObjectPool.transform.Find(key).transform.childCount >= EffectMaxCount && EffectMaxCount != 0) //갯수제한
+            {
+                firstFind.init(SpawnPosition);
+                return firstFind.obj;
+            }
+
+            PoolObjectParent = SearchObjectPool.transform.Find(key).gameObject;
+        }
+
+        RappingGameObject rapobj = new RappingGameObject();
+        GameObject obj = ProcessButton.instance.GetExplosionEffectBase(prefabname, PoolObjectParent.transform);
+        rapobj.adddata(obj, SpawnPosition, prefabname);
+        PoolList.Add(rapobj);
+        dicPool[key] = PoolList;
+        return obj;
+    }
+
+    //parent밑에 붙는 애들.
+    public GameObject GetPrefab(string prefabname, Transform inputparant, int EffectMaxCount = 1, bool bPoolSearch = true)
+    {
+        RappingGameObject findobj = null;
+        RappingGameObject firstfind = null;
+
+        List<RappingGameObject> PoolList = dicPool.ContainsKey(prefabname) == false ? new List<RappingGameObject>() : dicPool[prefabname];
+
+        if (bPoolSearch)
+        {
+            for (int i = 0; i < PoolList.Count; ++i)
+            {
+                if (PoolList[i].obj == null) //오브젝트 풀이 안지운애. (다른곳에서 소멸했다) 이거 코루틴 같은데서 변수받아놓고 중간에 코루틴 사라지면 객체도 소멸되는 현상있음
+                {
+                    PoolList.Remove(PoolList[i]);
+                    continue;
+                }
+                if (PoolList[i].obj.activeSelf == true || PoolList[i].fxname != prefabname)
+                {
+                    if (firstfind == null && PoolList[i].fxname == prefabname) //갯수 제한 걸렸을때 재활용할때 쓸놈
+                        firstfind = PoolList[i];
+                    continue;
+                }
+
+                if (!PoolList[i].bActiveCheck)
+                    continue;
+
+                if (PoolList[i].parantobj == null)
+                {
+                    PoolList.Remove(PoolList[i]);
+                    continue;
+                }
+                if (PoolList[i].fxname == prefabname && PoolList[i].parantobj.transform.parent == inputparant && findobj == null)
+                {
+                    findobj = PoolList[i];
+                    break;
+                }
+            }
+        }        
+
+        GameObject PoolObjectParent = null;
+        if (inputparant.transform.Find(prefabname) == null)
+        {
+            PoolObjectParent = new GameObject(prefabname);
+            PoolObjectParent.transform.parent = inputparant.transform;
+            PoolObjectParent.transform.localPosition = Vector3.zero;
+            PoolObjectParent.transform.localScale = Vector3.one;
+            PoolObjectParent.layer = 5;
+            //if (objectPoolPanelDatas.ContainsKey(prefabname))
+            //    PoolObjectParent.AddComponent<UIPanel>().depth = objectPoolPanelDatas[prefabname];
+            //else
+            //{
+            //    PoolObjectParent.AddComponent<UIPanel>().depth = objectPoolPanelCount;
+            //    objectPoolPanelDatas.Add(prefabname, objectPoolPanelCount);
+            //    objectPoolPanelCount++;
+            //}
+        }
+        else
+        {
+            PoolObjectParent = inputparant.transform.Find(prefabname).gameObject;
+        }
+
+        if (findobj == null)
+        {
+            if (inputparant.transform.Find(prefabname).transform.childCount >= EffectMaxCount && EffectMaxCount != 0 && firstfind != null) //갯수제한
+            {
+                firstfind.init(Vector3.zero, PoolObjectParent);
+                return firstfind.obj;
+            }
+
+            findobj = new RappingGameObject();
+            GameObject obj = ProcessButton.instance.GetExplosionEffectBase(prefabname, PoolObjectParent.transform);
+            findobj.adddata(obj, Vector3.zero, prefabname, PoolObjectParent);
+            PoolList.Add(findobj);
+            dicPool[prefabname] = PoolList;
+        }
+        else
+        {
+            findobj.init(Vector3.zero, PoolObjectParent);
+        }
+
+        return findobj.obj;
+    }
+
+    public void ClearPool()
+    {
+        if (dicPool.Count == 0)
+            return;
+
+        foreach (var item in dicPool)
+        {
+            List<RappingGameObject> list = item.Value;
+            for (int i = 0; i < list.Count; ++i)
+            {
+                Destroy(list[i].obj);
+            }
+            list.Clear();
+        }
+
+        dicPool.Clear();
+    }
+
+    public void SetActiveCheck(GameObject checkObj, bool bActiveCheck)
+    {
+        if (dicPool.Count == 0)
+            return;
+
+        foreach (var item in dicPool)
+        {
+            List<RappingGameObject> list = item.Value;
+
+            for (int nLoop = 0; nLoop < list.Count; nLoop++)
+            {
+                if (list[nLoop].obj == checkObj)
+                {
+                    list[nLoop].bActiveCheck = bActiveCheck;
+                }
+            }
+        }
+
+    }
+
+    public class RappingMonsterObject
+    {
+        public GameObject obj;
+        public Monster monster;
+    }
+
+    public class RappingGameObject
+    {
+        public CollisionObject colobj;
+        public Monster mon;
+        public GameObject obj;
+        public GameObject parantobj;
+        public ParticleSystem ps;
+        public TweenAlpha ta;
+        public TweenPosition tp;
+        public TweenScale ts;
+        public TweenRotation tr;
+        public Animator anim;
+        public string fxname;
+        public bool bActiveCheck = true;
+
+        Vector3 vOriLocalPosition;
+        Vector3 vOriLocalScale;
+        Quaternion vOriRotation;
+
+        public void init(Vector3 SpawnPosition, GameObject inputparantobj = null, bool isBackPool = false)
+        {
+            if (!obj.activeSelf)
+                obj.SetActive(true);
+
+            if (inputparantobj != null)
+            {
+                obj.transform.parent = inputparantobj.transform;
+                obj.transform.localPosition = Vector3.zero;
+            }
+            else
+            {
+                GameObject PoolObjectParent = null;
+                GameObject FindPool = isBackPool ? PoolObjectBack : PoolObject;
+                if (FindPool.transform.Find(fxname) == null)
+                {
+                    PoolObjectParent = new GameObject(fxname);
+                    PoolObjectParent.transform.parent = FindPool.transform;
+                    PoolObjectParent.transform.localScale = Vector3.one;
+                    PoolObjectParent.transform.localRotation = Quaternion.identity;
+                }
+                else
+                {
+                    PoolObjectParent = FindPool.transform.Find(fxname).gameObject;
+                    obj.transform.parent = PoolObjectParent.transform;
+                }
+
+                obj.transform.position = SpawnPosition;
+            }
+            obj.transform.localScale = vOriLocalScale;
+            obj.transform.localRotation = vOriRotation;
+
+            ParticleSystem[] pss = obj.GetComponentsInChildren<ParticleSystem>();
+            TweenAlpha[] tas = obj.GetComponentsInChildren<TweenAlpha>();
+            TweenPosition[] tps = obj.GetComponentsInChildren<TweenPosition>();
+            TweenScale[] tss = obj.GetComponentsInChildren<TweenScale>();
+            TweenRotation[] trs = obj.GetComponentsInChildren<TweenRotation>();
+            UISpriteAnimation[] anis = obj.GetComponentsInChildren<UISpriteAnimation>();
+            TextureUVAnimation[] uvanis = obj.GetComponentsInChildren<TextureUVAnimation>();
+
+            ps = obj.GetComponentInChildren<ParticleSystem>();
+            ta = obj.GetComponentInChildren<TweenAlpha>();
+            tp = obj.GetComponentInChildren<TweenPosition>();
+            ts = obj.GetComponentInChildren<TweenScale>();
+            tr = obj.GetComponentInChildren<TweenRotation>();
+            anim = obj.GetComponentInChildren<Animator>();
+
+            mon = obj.GetComponentInParent<Monster>();
+            colobj = obj.GetComponent<CollisionObject>();
+
+            int childcount = obj.transform.childCount;
+
+            for (int i = 0; i < childcount; ++i)
+            {
+                obj.transform.GetChild(i).localScale = Vector3.one;
+            }
+            for (int i = 0; i < pss.Length; ++i)
+            {
+                pss[i].Play();
+            }
+            for (int i = 0; i < tas.Length; ++i)
+            {
+                tas[i].ResetToBeginning();
+                tas[i].PlayForward();
+            }
+            for (int i = 0; i < tps.Length; ++i)
+            {
+                tps[i].ResetToBeginning();
+                tps[i].PlayForward();
+            }
+            for (int i = 0; i < tss.Length; ++i)
+            {
+                tss[i].ResetToBeginning();
+                tss[i].PlayForward();
+            }
+            for (int i = 0; i < trs.Length; ++i)
+            {
+                trs[i].ResetToBeginning();
+                trs[i].PlayForward();
+            }
+            for (int i = 0; i < anis.Length; ++i)
+            {
+                anis[i].ResetToBeginning();
+                anis[i].Play();
+            }
+            for (int i = 0; i < uvanis.Length; ++i)
+            {
+                uvanis[i].ResetToBeginning();
+                uvanis[i].PlayForward();
+            }
+        }
+
+        public void adddata(GameObject inputobj, Vector3 SpawnPosition, string fx, GameObject inputparantobj = null)
+        {
+            obj = inputobj;
+
+            vOriLocalPosition = inputobj.transform.localPosition;
+            vOriLocalScale = inputobj.transform.localScale;
+            vOriRotation = inputobj.transform.localRotation;
+
+            fxname = fx;
+            parantobj = inputparantobj;
+
+            obj.transform.position = SpawnPosition;
+            if (parantobj != null)
+            {
+                obj.transform.parent = inputparantobj.transform;
+                obj.transform.localPosition = vOriLocalPosition;
+            }
+
+            mon = obj.GetComponentInParent<Monster>();
+            colobj = obj.GetComponent<CollisionObject>();
+            ParticleSystem[] pss = inputobj.GetComponentsInChildren<ParticleSystem>();
+            ps = inputobj.GetComponentInChildren<ParticleSystem>();
+
+            float fduration = 0.0f;
+            for (int i = 0; i < pss.Length; ++i)
+            {
+                if (fduration < pss[i].duration)
+                {
+                    fduration = pss[i].duration;
+                    ps = pss[i];
+                }
+            }
+
+            ta = inputobj.GetComponentInChildren<TweenAlpha>();
+            tp = inputobj.GetComponentInChildren<TweenPosition>();
+            ts = inputobj.GetComponentInChildren<TweenScale>();
+            tr = inputobj.GetComponentInChildren<TweenRotation>();
+            anim = obj.GetComponentInChildren<Animator>();
+        }
+    }
+
+    public bool loadcomplate = false;
+    public void AddMonsterList(bool isMe, Monster monster)
+    {
+        List<Monster> monsterList = isMe ? playerMonsterList : enemyMonsterList;
+
+        monsterList.Add(monster);
+    }
+
+    public void DeleteMonsterList(bool isMe, Monster monster)
+    {
+        List<Monster> monsterList = isMe ? playerMonsterList : enemyMonsterList;
+
+        monsterList.Remove(monster);
+    }
+
+    public void SetPauseMonsterTween(bool isPause)
+    {
+        var allMonserList = new List<Monster>(playerMonsterList);
+        allMonserList.AddRange(enemyMonsterList);
+
+        if (allMonserList == null)
+            return;
+
+        foreach (var item in allMonserList)
+        {
+            if (item.bosskind != Monster.boss_kind.none)
+                continue;
+
+            GameObject obj = item.gameObject;
+
+            ParticleSystem[] pss = obj.GetComponentsInChildren<ParticleSystem>();
+            TweenAlpha[] tas = obj.GetComponentsInChildren<TweenAlpha>();
+            TweenPosition[] tps = obj.GetComponentsInChildren<TweenPosition>();
+            TweenScale[] tss = obj.GetComponentsInChildren<TweenScale>();
+            TweenRotation[] trs = obj.GetComponentsInChildren<TweenRotation>();
+            UISpriteAnimation[] anis = obj.GetComponentsInChildren<UISpriteAnimation>();
+            TextureUVAnimation[] uvanis = obj.GetComponentsInChildren<TextureUVAnimation>();
+
+            for (int i = 0; i < pss.Length; ++i)
+            {
+                if (isPause)
+                    pss[i].Stop();
+                else
+                    pss[i].Play();
+            }
+
+            for (int i = 0; i < tas.Length; ++i)
+            {
+                tas[i].enabled = !isPause;
+            }
+
+            for (int i = 0; i < tps.Length; ++i)
+            {
+                tps[i].enabled = !isPause;
+            }
+
+            for (int i = 0; i < tss.Length; ++i)
+            {
+                tss[i].enabled = !isPause;
+            }
+
+            for (int i = 0; i < trs.Length; ++i)
+            {
+                trs[i].enabled = !isPause;
+            }
+
+            for (int i = 0; i < anis.Length; ++i)
+            {
+                anis[i].enabled = !isPause;
+            }
+
+            for (int i = 0; i < uvanis.Length; ++i)
+            {
+                uvanis[i].enabled = !isPause;
+            }
+        }
+    }
+
+    public void SetPauseSubMissileTween(bool isPause)
+    {
+        foreach (KeyValuePair<string, List<GameObject>> temp in SubMissilePoolDict)
+        {
+            foreach (GameObject obj in temp.Value)
+            {
+                if (!obj)
+                    continue;
+
+                if (!obj.activeSelf)
+                    continue;
+
+                ParticleSystem[] pss = obj.GetComponentsInChildren<ParticleSystem>();
+                TweenAlpha[] tas = obj.GetComponentsInChildren<TweenAlpha>();
+                TweenPosition[] tps = obj.GetComponentsInChildren<TweenPosition>();
+                TweenScale[] tss = obj.GetComponentsInChildren<TweenScale>();
+                TweenRotation[] trs = obj.GetComponentsInChildren<TweenRotation>();
+                UISpriteAnimation[] anis = obj.GetComponentsInChildren<UISpriteAnimation>();
+                TextureUVAnimation[] uvanis = obj.GetComponentsInChildren<TextureUVAnimation>();
+
+                for (int i = 0; i < pss.Length; ++i)
+                {
+                    if (isPause)
+                        pss[i].Stop();
+                    else
+                        pss[i].Play();
+                }
+
+                for (int i = 0; i < tas.Length; ++i)
+                {
+                    tas[i].enabled = !isPause;
+                }
+
+                for (int i = 0; i < tps.Length; ++i)
+                {
+                    tps[i].enabled = !isPause;
+                }
+
+                for (int i = 0; i < tss.Length; ++i)
+                {
+                    tss[i].enabled = !isPause;
+                }
+
+                for (int i = 0; i < trs.Length; ++i)
+                {
+                    trs[i].enabled = !isPause;
+                }
+
+                for (int i = 0; i < anis.Length; ++i)
+                {
+                    anis[i].enabled = !isPause;
+                }
+
+                for (int i = 0; i < uvanis.Length; ++i)
+                {
+                    uvanis[i].enabled = !isPause;
+                }
+            }
+        }
+    }
+
+    public void RemoveObjectPool(string Poolname)
+    {
+        if(dicPool.ContainsKey(Poolname))
+        {
+
+            foreach (RappingGameObject item in dicPool[Poolname])
+            {
+                Destroy(item.obj);
+            }
+
+            dicPool[Poolname].Clear();
+        }
+    }
+}
