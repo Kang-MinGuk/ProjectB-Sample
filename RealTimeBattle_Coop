@@ -1,0 +1,2090 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using System;
+
+public class Battle_coop : MonoBehaviour {
+
+    public static Battle_coop instance = null;
+
+    void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+        else if (instance != this)
+        {
+            Destroy(gameObject);
+        }
+    }
+    void OnDestroy()
+    {
+        instance = null;
+    }
+    void Start()
+    {
+    }
+    public bool sendWaitingPartner = false;
+    private float SendTotalTime = 0;
+    private float SendTotalTime2 = 0;
+    private string LastSendLog = "";
+    int logCount = 0;
+    void Update()
+    {
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop)
+        {
+            DateTime now = DateTime.Now;
+            if ((stagetype == stage_type.normal || stagetype == stage_type.bosstime) &&
+                BattleManager.instance.WaveCheckTime1.AddMilliseconds(500) < now)
+            {
+                BattleManager.instance.Sync(stagetype == stage_type.bosstime);
+            }
+
+            int.TryParse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.MonsterHPSync, (int)GameDataManager.systemDataTemplate_.value2], out int syncTime);
+            if (stagetype == stage_type.bosstime &&
+                BattleManager.instance.WaveCheckTime2.AddMilliseconds(syncTime) < now)
+            {
+                BattleManager.instance.SendSyncMonsterHPPacket();
+            }
+        }
+
+        if (BattleManager.instance.isPause) return;
+        if (GameManager.instance.ErrorReconnecting) return;
+        if (BattleManager.instance.battle_type != BattleManager.battletype.coop) return;
+        if (stage_type.finish == stagetype) return;
+        float dt = Time.deltaTime;
+        BattleManager.instance.pingTime += dt;
+        int.TryParse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.pingpong, (int)GameDataManager.systemDataTemplate_.value1], out int pingtime);
+        if (pingtime <= 0) pingtime = 3;
+        int.TryParse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.pingpong, (int)GameDataManager.systemDataTemplate_.value2], out int limit);
+        if (limit <= 0) limit = 3;
+        if (BattleManager.instance.pingTime > pingtime && ProcessButton.instance.curUIState == ProcessButton.UI_STATE.battle_coop)
+        {
+            if (limit < BattleManager.instance.pingCount)
+            {
+                BattleManager.instance.isPause = true;
+                //TODO
+                if (monstergenerate.instance && monstergenerate.instance.KillMonsterDict.Count > 0)
+                {
+                    string monsterIDs = "";
+                    string monsterValues = "";
+                    foreach (var item in monstergenerate.instance.KillMonsterDict)
+                    {
+                        monsterIDs += item.Key + "#";
+                        monsterValues += item.Value.ToString() + "#";
+                    }
+                    monstergenerate.instance.KillMonsterDict.Clear();
+                    if (!ProcessButton.instance.isShowReconnectMessage)
+                        ProcessButton.instance.sendtotalpacket(Totalpacket_type.killmonster, monsterIDs, monsterValues, false, false);
+                }
+
+                string sendDailyQuestIndex = "";
+                string sendDailyQuestAdd = "";
+
+                sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.normaldamage).ToString() + "#";
+                sendDailyQuestAdd += my_player_me.normalDamage.ToString() + "#";
+                sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.cridamage).ToString() + "#";
+                sendDailyQuestAdd += my_player_me.criDamage.ToString() + "#";
+                sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.runedamage).ToString() + "#";
+                sendDailyQuestAdd += my_player_me.runeDamage.ToString() + "#";
+
+                ProcessButton.instance.sendtotalpacket(Totalpacket_type.questClear, sendDailyQuestIndex, sendDailyQuestAdd);
+
+                my_player_me.normalDamage = 0;
+                my_player_me.criDamage = 0;
+                my_player_me.runeDamage = 0;
+                NetworkManager.instance.SendPacket(PACKETTYPE.PT_ServerLog, "PingCheck Over Coop :" + FileManager.id, false);
+                ProcessButton.instance.ShowReconnectMessageBox("TCP_TEXT_NETWORKERROR2", false);
+            }
+            else
+            {
+                ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_PingCheck, BattleManager.instance.pingCount.ToString());
+                BattleManager.instance.pingCount++;
+            }
+            BattleManager.instance.pingTime = 0.0f;
+        }
+
+        if (stage_type.readyToStart == stagetype) return;
+        if (BattleManager.instance.willDie)
+            return;
+        bool isLastSpawnKill = false;
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop)
+        {
+            int summonCount = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(2, GameDataManager.monsterGeneratorTemplate_.WaveSpawnGeneralMonsterCount).Split('#')[0]);
+            if (summonCount <= monstergenerate.instance.SpawnCountList[0] && summonCount <= monstergenerate.instance.SpawnCountList_CoopEnemy[0])
+            {
+                isLastSpawnKill = true;
+            }
+            BattleManager.instance.PlayTime = (float)(monstergenerate.instance.SpawnCountList[0] + monstergenerate.instance.SpawnCountList_CoopEnemy[0]);
+        }
+
+        if (isBossSpawn)
+        {
+                isLastSpawnKill = true;
+        }
+            
+        if (isLastSpawnKill)
+        {
+            bool isAllKillNormal = true;
+            var enemyMonsterList = ObjectPoolManager.instance.enemyMonsterList;
+            if (enemyMonsterList != null)
+            {
+                for(int i = 0; i < enemyMonsterList.Count; ++i)
+                {
+                    Monster item = enemyMonsterList[i];
+                    if (item.hp <= 0)
+                    {
+                        item.gameObject.SetActive(false);
+                    }
+
+                    if ((item.isfield && item.hp > 0) || item.hp > 0 || item.movetype == 100)
+                    {
+                        isAllKillNormal = false;
+                        break;
+                    }
+                }
+            }
+
+            var playerMonsterList = ObjectPoolManager.instance.playerMonsterList;
+            if (playerMonsterList != null)
+            {
+                for (int i = 0; i < playerMonsterList.Count; ++i)
+                {
+                    Monster item = playerMonsterList[i];
+                    if (item.hp <= 0)
+                    {
+                        item.gameObject.SetActive(false);
+                    }
+
+                    if ((item.isfield && item.hp > 0) || item.hp > 0 || item.movetype == 100)
+                    {
+                        isAllKillNormal = false;
+                        break;
+                    }
+                }
+            }
+
+            if (isAllKillNormal && nextStage)
+            {
+                isBossSpawn = false;
+                bosstimecheck = false;
+                nextStage = false;
+                if (BattleManager.instance.battleObj &&
+                    (stagetype == stage_type.normal || stagetype == stage_type.bosstime))
+                {
+                    ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_checkPartnerAllKill, "");
+                    sendWaitingPartner = true;
+                    SendTotalTime = TotalTime;
+                    SendTotalTime2 = TotalTime;
+                    Debug.Log(string.Format("Send TCP pt_checkPartnerAllKill ! ! ! ! ! ! ! ! ! ! {0} {1} {2}", 
+                        waveCount, ObjectPoolManager.instance.enemyMonsterList.Count, ObjectPoolManager.instance.playerMonsterList.Count));
+                }
+            }
+        }
+
+        TotalTime += dt;
+        if (SendTotalTime > 0.0f)
+            SendTotalTime2 += dt;
+        if (TotalTime > 2f && settingtimeflag == false && BattleManager.battletype.coop == BattleManager.instance.battle_type)
+        {
+            if(isAwakeMode)
+                ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.settingtime, ((int)playerinfo.RoomType.E_AWAKE_MULTI).ToString());
+            else
+                ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.settingtime, ((int)playerinfo.RoomType.E_MULTI).ToString());
+            settingtimeflag = true;
+        }
+
+        if (BattleManager.instance.battleObj)
+        {
+            if (bosstimecheck == true)
+            {
+                if (stagetype == stage_type.normal)
+                {
+                    monstergenerate.instance.SpawnProcess_Coop(isAwakeMode);
+                }
+            }
+        }
+
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop && BattleManager.instance.battleObj)
+        {
+            if (my_player_me.sp_mysp < my_player_me.sp_button || my_player_me.get_empty_tileindex() == -1)
+            {
+                BattleManager.instance.battleObj.transform.Find("Attack/NoSummon").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Attack/Summonlight").gameObject.SetActive(false);
+            }
+            else
+            {
+                BattleManager.instance.battleObj.transform.Find("Attack/NoSummon").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Attack/Summonlight").gameObject.SetActive(true);
+            }
+        }
+
+        if (stagetype == stage_type.normal || stagetype == stage_type.bosstime)
+            BattleManager.instance.WaveTime += dt;
+    }
+    DateTime updatechecktime_1 = DateTime.Now;
+    DateTime updatechecktime_2 = DateTime.Now;
+
+    public DateTime UpdateCheckTime_1 { set { updatechecktime_1 = value; } }
+    public DateTime UpdateCheckTime_2 { set { updatechecktime_2 = value; } }
+
+    IEnumerator CheckPartnerConnect()
+    {
+        yield return new WaitForSeconds(3.0f);
+
+        if (!nextStage)
+            ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_checkPartnerAllKill, "");
+    }
+
+    public class DelayPacket
+    {
+        public float actiontime;
+        public string packet;
+
+        public DelayPacket(float time, string inputpacket)
+        {
+            actiontime = time;
+            packet = inputpacket;
+        }
+
+        public void setdata(float time, string inputpacket)
+        {
+            actiontime = time;
+            packet = inputpacket;
+        }
+    }
+
+    public List<DelayPacket> packetlist = new List<DelayPacket>();
+
+    public enum Button_type
+    {
+        attack = 1,
+        deck_character_levelup = 2,
+        finish1,
+        finish2,
+        end,
+
+    }
+
+    public enum stage_type
+    {
+        none = 0,
+        normal = 1,
+        finish = 2,
+        bosstime = 3,
+        tolobby = 4,
+        bossselect = 5,
+        bossspawn_prevReaction,
+        bossspawn,
+        cancel,
+        giveUp,
+        readyToStart,
+        pause,
+        reconnect,
+    }
+
+    public bool isAwakeMode = false;
+
+    public player my_player_me = null;
+    public player my_player_you = null;
+
+    public bool bosstimecheck;
+    public float bosstime;
+    public float NextWaveTime;
+    public stage_type stagetype;
+    public stage_type prevPauseStageType;
+
+    public GameObject resultobj = null;
+    public string roomID;
+    public playerinfo.RoomType roomType = playerinfo.RoomType.E_NONE;
+    private int waveCount = 0;
+    public int WaveCount { get { return waveCount; } set {waveCount = value;}}
+    public int rewardCard = 0;
+    private float TotalTime = 0;
+    public bool isBossSpawn = false;
+    public bool nextStage = false;
+
+    public void settotaltime( float settime )
+    {
+        TotalTime = settime;
+    }
+
+    public float gettotaltime()
+    {
+        return TotalTime;
+    }
+
+    public player GetPlayer( string id )
+    {
+        if (!my_player_me) return null;
+
+        if (my_player_me.userid == id) return my_player_me;
+
+        return my_player_you;
+    }
+
+    public bool settingtimeflag = false;
+    public void init(GameObject obj, bool inputAwakeMoed)
+    {
+        if (Battle_coop_ai.instance)
+            Battle_coop_ai.instance.stagetype = Battle_coop_ai.stage_type.none;
+        if (monstergenerate.instance)
+            monstergenerate.instance.KillMonsterDict.Clear();
+        BattleManager.instance.EnemyGoodAmount = 0;
+        BattleManager.instance.HiddenHeroCount.Clear();
+        BattleManager.instance.HiddenHeroCount2.Clear();
+        BattleManager.instance.initwaveCount = 0;
+        BattleManager.instance.isRuneSpawnComplete = false;
+        BattleManager.instance.pingCount = 0;
+        BattleManager.instance.myServerPing = 0;
+        BattleManager.instance.enemyServerPing = 0;
+        BattleManager.instance.pingTime = 0.0f;
+        BattleManager.instance.myRedTime = 0.0f;
+        BattleManager.instance.enemyRedTime = 0.0f;
+        BattleManager.instance.PlayTime = 0f;
+        BattleManager.instance.isSoloPlaying = false;
+        StartPowUpNoUse = true;
+        BattleManager.instance.willDie = false;
+        BattleManager.instance.willappearTileIndex.Clear();
+        needBossSelect = true;
+        needBossFXactiveFalse = false;
+        ProcessButton.instance.DestroyRewardGain(true);
+        if (BattleManager.instance.battleObj) BattleManager.instance.battleObj.transform.Find("Attack").GetComponent<BoxCollider>().enabled = false; //룬 소환 다될때까지 캐릭터 뽑기 막기
+        Vector2 MousePosition;
+        waveCount = 0;
+        checkCount = 0;
+        roomID = string.Empty;
+        if (!my_player_me)
+            my_player_me = obj.transform.Find("Player").GetComponent<player>();
+        if (!my_player_you)
+            my_player_you = obj.transform.Find("Enemmy").GetComponent<player>();
+
+        BattleManager.instance.battleObj = obj;
+        
+        BattleManager.instance.battle_type = BattleManager.battletype.coop;
+        BattleManager.instance.nextBosskind = Monster.boss_kind.none;
+        BattleManager.instance.nextBosskind2 = Monster.boss_kind.none;
+        BattleManager.instance.battleObj.transform.Find("BossSelectFX").gameObject.SetActive(false);
+        BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").gameObject.SetActive(false);
+
+        my_player_me.init(BattleManager.battletype.coop, true);
+        my_player_you.init(BattleManager.battletype.coop, false);
+
+        BattleManager.instance.battleObj.transform.Find("Attack/needsp").GetComponent<UILabel>().text = my_player_me.sp_button.ToString();
+        BattleManager.instance.battleObj.transform.Find("CurrentSp/Label (1)").GetComponent<UILabel>().text = my_player_me.sp_mysp.ToString();
+
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Attack").GetComponent<UIButton>(), "onbuttonMulti", Button_type.attack, typeof(Button_type), 0, typeof(int));
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice").GetComponent<UIButton>(), "onbuttonMulti", Button_type.deck_character_levelup, typeof(Button_type), 0, typeof(int));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice").GetComponent<UIEventTrigger>().onDrag.Add(new EventDelegate(() =>
+        {
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/Sprite/FullGageFX").gameObject.activeSelf || BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/Sprite/FreeFullGageFX").gameObject.activeSelf)
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/DragChar").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/Cover").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(true);
+            }
+
+            BattleManager.instance.SpecialSkillDragOnChaseObject = BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/DragChar").gameObject;
+            //BattleManager.instance.battleObj.transform.Find("Activefield").position.y;
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/DragChar").position.y > BattleManager.instance.battleObj.transform.Find("SkillField").position.y && 
+            (monstergenerate.instance.IsMonsterInField(true) == true || 
+            GameDataManager.GetDiceTemplateData(my_player_me.deck_character[0].GetComponent<Character>().id, (int)GameDataManager.diceTemplate_.condition_type) == "1"))
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/DragChar").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/Cover").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+                ProcessButton.instance.onbuttonMulti(Button_type.deck_character_levelup, 0, true, true);
+                UIManager.instance.transform.GetComponent<UICamera>().ProcessTouch(false, true);
+            }
+        }));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice").GetComponent<UIEventTrigger>().onDragEnd.Add(new EventDelegate(() =>
+        {
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/DragChar").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice/Cover").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+        }));
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)").GetComponent<UIButton>(), "onbuttonMulti", Button_type.deck_character_levelup, typeof(Button_type), 1, typeof(int));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)").GetComponent<UIEventTrigger>().onDrag.Add(new EventDelegate(() =>
+        {
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/Sprite/FullGageFX").gameObject.activeSelf || BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/Sprite/FreeFullGageFX").gameObject.activeSelf)
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/DragChar").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/Cover").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(true);
+            }
+
+            BattleManager.instance.SpecialSkillDragOnChaseObject = BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/DragChar").gameObject;
+            //BattleManager.instance.battleObj.transform.Find("Activefield").position.y;
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/DragChar").position.y > BattleManager.instance.battleObj.transform.Find("SkillField").position.y && (monstergenerate.instance.IsMonsterInField(true) == true || 
+            GameDataManager.GetDiceTemplateData(my_player_me.deck_character[1].GetComponent<Character>().id, (int)GameDataManager.diceTemplate_.condition_type) == "1"))
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/DragChar").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/Cover").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+                ProcessButton.instance.onbuttonMulti(Button_type.deck_character_levelup, 1, true, true);
+                UIManager.instance.transform.GetComponent<UICamera>().ProcessTouch(false, true);
+            }
+        }));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)").GetComponent<UIEventTrigger>().onDragEnd.Add(new EventDelegate(() =>
+        {
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/DragChar").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)/Cover").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+        }));
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)").GetComponent<UIButton>(), "onbuttonMulti", Button_type.deck_character_levelup, typeof(Button_type), 2, typeof(int));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)").GetComponent<UIEventTrigger>().onDrag.Add(new EventDelegate(() =>
+        {
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/Sprite/FullGageFX").gameObject.activeSelf || BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/Sprite/FreeFullGageFX").gameObject.activeSelf)
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/DragChar").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/Cover").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(true);
+            }
+
+            BattleManager.instance.SpecialSkillDragOnChaseObject = BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/DragChar").gameObject;
+            //BattleManager.instance.battleObj.transform.Find("Activefield").position.y;
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/DragChar").position.y > BattleManager.instance.battleObj.transform.Find("SkillField").position.y && (monstergenerate.instance.IsMonsterInField(true) == true || 
+            GameDataManager.GetDiceTemplateData(my_player_me.deck_character[2].GetComponent<Character>().id, (int)GameDataManager.diceTemplate_.condition_type) == "1"))
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/DragChar").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/Cover").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+                ProcessButton.instance.onbuttonMulti(Button_type.deck_character_levelup, 2, true, true);
+                UIManager.instance.transform.GetComponent<UICamera>().ProcessTouch(false, true);
+            }
+        }));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)").GetComponent<UIEventTrigger>().onDragEnd.Add(new EventDelegate(() =>
+        {
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/DragChar").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)/Cover").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+        }));
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)").GetComponent<UIButton>(), "onbuttonMulti", Button_type.deck_character_levelup, typeof(Button_type), 3, typeof(int));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)").GetComponent<UIEventTrigger>().onDrag.Add(new EventDelegate(() =>
+        {
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/Sprite/FullGageFX").gameObject.activeSelf || BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/Sprite/FreeFullGageFX").gameObject.activeSelf)
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/DragChar").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/Cover").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(true);
+            }
+
+            BattleManager.instance.SpecialSkillDragOnChaseObject = BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/DragChar").gameObject;
+            //BattleManager.instance.battleObj.transform.Find("Activefield").position.y;
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/DragChar").position.y > BattleManager.instance.battleObj.transform.Find("SkillField").position.y && (monstergenerate.instance.IsMonsterInField(true) == true || 
+            GameDataManager.GetDiceTemplateData(my_player_me.deck_character[3].GetComponent<Character>().id, (int)GameDataManager.diceTemplate_.condition_type) == "1"))
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/DragChar").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/Cover").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+                ProcessButton.instance.onbuttonMulti(Button_type.deck_character_levelup, 3, true, true);
+                UIManager.instance.transform.GetComponent<UICamera>().ProcessTouch(false, true);
+            }
+        }));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)").GetComponent<UIEventTrigger>().onDragEnd.Add(new EventDelegate(() =>
+        {
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/DragChar").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)/Cover").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+        }));
+        ProcessButton.instance.AddOnClickEvent(BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)").GetComponent<UIButton>(), "onbuttonMulti", Button_type.deck_character_levelup, typeof(Button_type), 4, typeof(int));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)").GetComponent<UIEventTrigger>().onDrag.Add(new EventDelegate(() =>
+        {
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/Sprite/FullGageFX").gameObject.activeSelf || BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/Sprite/FreeFullGageFX").gameObject.activeSelf)
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/DragChar").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/Cover").gameObject.SetActive(true);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(true);
+            }
+
+            BattleManager.instance.SpecialSkillDragOnChaseObject = BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/DragChar").gameObject;
+            //BattleManager.instance.battleObj.transform.Find("Activefield").position.y;
+            if (BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/DragChar").position.y > BattleManager.instance.battleObj.transform.Find("SkillField").position.y && (monstergenerate.instance.IsMonsterInField(true) == true || 
+            GameDataManager.GetDiceTemplateData(my_player_me.deck_character[4].GetComponent<Character>().id, (int)GameDataManager.diceTemplate_.condition_type) == "1"))
+            {
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/DragChar").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/Cover").gameObject.SetActive(false);
+                BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+                ProcessButton.instance.onbuttonMulti(Button_type.deck_character_levelup, 4, true, true);
+                UIManager.instance.transform.GetComponent<UICamera>().ProcessTouch(false, true);
+            }
+        }));
+        BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)").GetComponent<UIEventTrigger>().onDragEnd.Add(new EventDelegate(() =>
+        {
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/DragChar").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)/Cover").gameObject.SetActive(false);
+            BattleManager.instance.battleObj.transform.Find("Activefield").gameObject.SetActive(false);
+        }));
+
+        BattleManager.instance.battleObj.transform.Find("Enemmy/UserBan").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+        {
+            bool isban = true;
+            if (BattleManager.instance.battleObj.transform.Find("Enemmy/NickName/ban").gameObject.activeSelf == false)
+            {
+                isban = true;
+            }
+            else
+            {
+                isban = false;
+            }
+            ProcessButton.instance.SetBanEmoticon(BattleManager.instance.battleObj, !isban);
+        }));
+
+        updateDeckDiceinfo();
+
+        TotalTime = 0f;
+        settingtimeflag = false;
+
+        Transform battleTrans;
+
+        float[] turnpointdistance = new float[3];
+        Vector3[] TurnningPoint = new Vector3[3];
+
+        TurnningPoint[0].x = 0;
+        TurnningPoint[0].y = 0;
+
+        TurnningPoint[1].x = 0;
+        TurnningPoint[1].y = 435;
+
+        TurnningPoint[2].x = 610;
+        TurnningPoint[2].y = 435;
+
+        string Log = "=====Player Tile Position =====\n";
+        for (int i = 0; i < 15; ++i)
+        {
+            Log += string.Format("Player Tile Index({0}) Position : {1}\n", i, getcombattileobj(true, i).transform.localPosition.ToString("N4"));
+
+            battleTrans = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone");
+
+            turnpointdistance[0] = Vector3.Distance(getcombattileobj(true, i).transform.localPosition, TurnningPoint[0] + battleTrans.transform.localPosition);
+            turnpointdistance[1] = Vector3.Distance(getcombattileobj(true, i).transform.localPosition, TurnningPoint[1] + battleTrans.transform.localPosition);
+            turnpointdistance[2] = Vector3.Distance(getcombattileobj(true, i).transform.localPosition, TurnningPoint[2] + battleTrans.transform.localPosition);
+
+            Log += string.Format("Point Distance : {0} , {1} , {2}\n", turnpointdistance[0].ToString("N4"), turnpointdistance[1].ToString("N4"), turnpointdistance[2].ToString("N4"));
+        }
+
+        TurnningPoint[0].x = -610;
+        TurnningPoint[0].y = 0;
+
+        TurnningPoint[1].x = -610;
+        TurnningPoint[1].y = -435;
+
+        TurnningPoint[2].x = 0;
+        TurnningPoint[2].y = -435;
+
+        bosstime = 0;
+        bosstimecheck = false;
+
+        Log += "=====Enemy Tile Position =====\n";
+        for (int i = 0; i < 15; ++i)
+        {
+            battleTrans = BattleManager.instance.battleObj.transform.Find("Enemmy/MonsterZone");
+            Log += string.Format("Enemy Tile Index({0}) Position : {1}\n", i, getcombattileobj(false, i).transform.localPosition.ToString("N4"));
+
+            turnpointdistance[0] = Vector3.Distance(getcombattileobj(false, i).transform.localPosition, TurnningPoint[0] + battleTrans.transform.localPosition);
+            turnpointdistance[1] = Vector3.Distance(getcombattileobj(false, i).transform.localPosition, TurnningPoint[1] + battleTrans.transform.localPosition);
+            turnpointdistance[2] = Vector3.Distance(getcombattileobj(false, i).transform.localPosition, TurnningPoint[2] + battleTrans.transform.localPosition);
+
+            Log += string.Format("Point Distance : {0} , {1} , {2}\n", turnpointdistance[0].ToString("N4"), turnpointdistance[1].ToString("N4"), turnpointdistance[2].ToString("N4"));
+        }
+
+        ProcessButton.instance.sendtotalpacketBattleLog(Log);
+        isAwakeMode = inputAwakeMoed;
+        if (isAwakeMode)
+            monstergenerate.instance.Init(6);
+        else
+            monstergenerate.instance.Init(2);
+
+
+        for (int j = 0; j < ObjectPoolManager.instance.PlayerMonsterPoolList.Count; j++)
+        {
+            Destroy(ObjectPoolManager.instance.PlayerMonsterPoolList[j].obj);
+        }
+        ObjectPoolManager.instance.PlayerMonsterPoolList.Clear();
+
+
+        for (int j = 0; j < ObjectPoolManager.instance.EnemyMonsterPoolList.Count; j++)
+        {
+            Destroy(ObjectPoolManager.instance.EnemyMonsterPoolList[j].obj);
+        }
+        ObjectPoolManager.instance.EnemyMonsterPoolList.Clear();
+
+        BattleManager.instance.isFirstBoss = false;
+        BattleManager.instance.nextBosskind = (Monster.boss_kind)monstergenerate.instance.findCoopBoss(isAwakeMode);
+
+        monstergenerate.instance.isAwakeCoopMode = isAwakeMode;
+        if (isAwakeMode)
+        {
+            obj.transform.Find("BG").GetComponent<UITexture>().mainTexture = ResourceLoader.Load_Texture("CombatTexture/combat_Comperation_Awake") as Texture;
+            obj.transform.Find("GetKey/IconKey").GetComponent<UISprite>().spriteName = "IconKeyAwake";
+        }
+
+        BattleManager.instance.battleObj.transform.Find("Surrender").gameObject.SetActive(false);
+        BattleManager.instance.battleObj.transform.Find("Surrender").GetComponent<UIButton>().onClick.Add(new EventDelegate(() => {
+            ProcessButton.instance.askpopup(null, ProcessButton.eAskType.giveUp, "");
+        }));
+    }
+
+
+    void streamEnemyData()
+    {
+        ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_pause, "");
+    }
+
+
+    public void updateDeckDiceinfo()
+    {
+        if (!string.IsNullOrEmpty(my_player_you.nickname) && my_player_you.nickname != "")
+        {
+            ProcessButton.instance.SetCustomFontText(
+                my_player_you.EquipCustumFontID,
+                BattleManager.instance.battleObj.transform.Find("Enemmy/NickName").GetComponent<UILabel>(),
+                my_player_you.nickname);
+            BattleManager.instance.battleObj.transform.Find("Enemmy/NickName/Sprite").GetComponent<UISprite>().spriteName = "Medal" + my_player_you.grade;
+        }
+
+        if (!string.IsNullOrEmpty(my_player_me.nickname) && my_player_me.nickname != "")
+        {
+            ProcessButton.instance.SetCustomFontText(
+                my_player_me.EquipCustumFontID,
+                BattleManager.instance.battleObj.transform.Find("Player/NickName").GetComponent<UILabel>(),
+                my_player_me.nickname);
+
+            BattleManager.instance.battleObj.transform.Find("Player/NickName/Sprite").GetComponent<UISprite>().spriteName = "Medal" + my_player_me.grade;
+
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            int PowerLv = my_player_me.deck_character[i].GetComponent<Character>().powUplevel;
+            int PowerLvUpPrice = 100;
+            for (int j = 0; j < PowerLv; ++j)
+                PowerLvUpPrice += j * 100;
+
+            if (my_player_you.deck_character[i])
+            {
+                getcombatdeckobj(i, false).transform.Find("Lv").GetComponent<UILabel>().text = string.Format("{0}/5", my_player_you.deck_character[i].GetComponent<Character>().powUplevel);
+
+                UISprite yourDiceSprite = getcombatdeckobj(i, false).transform.Find("Sprite").GetComponent<UISprite>();
+                int yourDiceId = my_player_you.deck_character[i].GetComponent<Character>().id;
+                int yourDiceskinId = my_player_you.deck_character[i].GetComponent<Character>().skin;
+                BattleManager.instance.SetDiceIcon(yourDiceSprite, yourDiceId, yourDiceskinId);
+            }
+
+            if (my_player_me.deck_character[i])
+            {
+                UISprite myDiceSprite = getcombatdeckobj(i).transform.Find("Sprite").GetComponent<UISprite>();
+                int myDiceId = my_player_me.deck_character[i].GetComponent<Character>().id;
+                int myDiceskinId = my_player_me.deck_character[i].GetComponent<Character>().skin;
+                BattleManager.instance.SetDiceIcon(myDiceSprite, myDiceId, myDiceskinId);
+
+                UISprite mySpecailSprite = getcombatdeckobj(i).transform.Find("DragChar").GetComponent<UISprite>();
+                BattleManager.instance.SetDiceIcon(mySpecailSprite, myDiceId, myDiceskinId);
+
+                getcombatdeckobj(i).transform.Find("Lv").GetComponent<UILabel>().text = string.Format("{0}/5", my_player_me.deck_character[i].GetComponent<Character>().powUplevel);
+                getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().text = PowerLvUpPrice.ToString();
+
+                if (isPossiblePowerUp(i))
+                {
+                    getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.white;
+                }
+                else
+                {
+                    getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.red;
+                }
+
+                string grade = GameManager.instance.GetDiceTemplate(my_player_me.deck_character[i].GetComponent<Character>().id, GameDataManager.diceTemplate_.grade);
+                getcombatdeckobj(i).transform.Find("LegendDiceBorder").gameObject.SetActive(false);
+                switch (grade)
+                {
+                    case "4":
+                        getcombatdeckobj(i).transform.Find("LegendDiceBorder").gameObject.SetActive(true);
+                        break;
+                }
+
+                if (my_player_me.deck_character[i].GetComponent<Character>().powUplevel >= 5)
+                {
+                    getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().text = "Max";
+                    getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.white;
+                }
+            }
+        }
+    }
+
+    public void UpdateDeckDicePowerUpState()
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            if (my_player_me == null) return;
+
+            if (isPossiblePowerUp(i))
+                getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.white;
+            else
+                getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.red;
+
+            if (my_player_me.deck_character[i].GetComponent<Character>().powUplevel >= 5)
+            {
+                getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().text = "Max";
+                getcombatdeckobj(i).transform.Find("Cost").GetComponent<UILabel>().color = Color.white;
+            }
+        }
+    }
+    public GameObject getcombatdeckobj(int index, bool isme = true)
+    {
+        string pathstring = "Player/LvGrid/dice";
+        if (isme == false)
+            pathstring = "Enemmy/LvGrid/dice";
+        if (BattleManager.instance.battleObj == null || BattleManager.instance.battle_type == BattleManager.battletype.Idle) return null;
+        switch (index)
+        {
+            case 0: return BattleManager.instance.battleObj.transform.Find(pathstring).gameObject;
+            case 1: return BattleManager.instance.battleObj.transform.Find(pathstring + " (1)").gameObject;
+            case 2: return BattleManager.instance.battleObj.transform.Find(pathstring + " (2)").gameObject;
+            case 3: return BattleManager.instance.battleObj.transform.Find(pathstring + " (3)").gameObject;
+            case 4: return BattleManager.instance.battleObj.transform.Find(pathstring + " (4)").gameObject;
+        }
+        return null;
+    }
+    public GameObject getcombattileobj(bool isme, int index)
+    {
+        if (BattleManager.instance.battleObj == null || BattleManager.instance.battle_type == BattleManager.battletype.Idle) return null;
+
+        string path = isme == true ? "Player" : "Enemmy";
+
+        if (isme == false)
+        {
+            if (index % 3 == 0)
+            {
+                index += 2;
+            }
+            else if (index % 3 == 2)
+            {
+                index -= 2;
+            }
+        }
+
+        switch (index)
+        {
+            case 0: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot").gameObject;
+            case 1: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (1)").gameObject;
+            case 2: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (2)").gameObject;
+            case 3: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (3)").gameObject;
+            case 4: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (4)").gameObject;
+            case 5: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (5)").gameObject;
+            case 6: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (6)").gameObject;
+            case 7: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (7)").gameObject;
+            case 8: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (8)").gameObject;
+            case 9: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (9)").gameObject;
+            case 10: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (10)").gameObject;
+            case 11: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (11)").gameObject;
+            case 12: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (12)").gameObject;
+            case 13: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (13)").gameObject;
+            case 14: return BattleManager.instance.battleObj.transform.Find(path + "/Grid/slot (14)").gameObject;
+        }
+
+        return null;
+    }
+    public GameObject getcombatdeckobj(int index)
+    {
+        if (BattleManager.instance.battleObj == null || BattleManager.instance.battle_type == BattleManager.battletype.Idle) return null;
+        switch (index)
+        {
+            case 0: return BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice").gameObject;
+            case 1: return BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (1)").gameObject;
+            case 2: return BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (2)").gameObject;
+            case 3: return BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (3)").gameObject;
+            case 4: return BattleManager.instance.battleObj.transform.Find("Player/LvGrid/dice (4)").gameObject;
+        }
+        return null;
+    }
+
+    public void getcombatdeckobj(ref List<GameObject> combatDeckList, bool isme = true)
+    {
+        if (BattleManager.instance.battleObj == null || BattleManager.instance.battle_type == BattleManager.battletype.Idle) return;
+
+        string path = isme ? "Player" : "Enemmy";
+
+        combatDeckList.Add(BattleManager.instance.battleObj.transform.Find(string.Format("{0}/LvGrid/dice", path)).gameObject);
+        combatDeckList.Add(BattleManager.instance.battleObj.transform.Find(string.Format("{0}/LvGrid/dice (1)", path)).gameObject);
+        combatDeckList.Add(BattleManager.instance.battleObj.transform.Find(string.Format("{0}/LvGrid/dice (2)", path)).gameObject);
+        combatDeckList.Add(BattleManager.instance.battleObj.transform.Find(string.Format("{0}/LvGrid/dice (3)", path)).gameObject);
+        combatDeckList.Add(BattleManager.instance.battleObj.transform.Find(string.Format("{0}/LvGrid/dice (4)", path)).gameObject);
+    }
+    public void getcombattileobj(bool isme, ref List<GameObject> combatTileList)
+    {
+        if (BattleManager.instance.battleObj == null || BattleManager.instance.battle_type == BattleManager.battletype.Idle) return;
+
+        if (isme == false)
+        {
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (14)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (13)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (12)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (11)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (10)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (9)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (8)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (7)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (6)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (5)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (4)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (3)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (2)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (1)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot").gameObject);
+        }
+        else
+        {
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (1)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (2)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (3)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (4)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (5)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (6)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (7)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (8)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (9)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (10)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (11)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (12)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (13)").gameObject);
+            combatTileList.Add(BattleManager.instance.battleObj.transform.Find("Player/Grid/slot (14)").gameObject);
+        }
+
+    }
+
+    IEnumerator delaysetactive(float time, GameObject obj, bool flag)
+    {
+        yield return new WaitForSeconds(time);
+
+        if (obj)
+        {
+            obj.gameObject.SetActive(flag);
+
+            if (flag)
+                ProcessButton.instance.ResetTweenComponentsInChildren(obj);
+        }
+            
+    }
+    public bool needBossSelect = true;
+    public bool needBossFXactiveFalse = true;
+    public void changestage(stage_type type, int value = 0, bool isClient = false)
+    {
+        if (stagetype == type)
+        {
+            NetworkManager.instance.SendPacket(PACKETTYPE.PT_ServerLog, string.Format("[SameType - Coop] {0} | {1}", my_player_me.userid, type.ToString()), false);
+            return;
+        }
+        Debug.Log(string.Format("ChangeStage Start - {0} {1}", type.ToString(), waveCount));
+        BattleManager.instance.willDie = false;
+        switch (type)
+        {
+            case stage_type.normal:
+                {
+                    sendWaitingPartner = false;
+                    SendTotalTime = 0.0f;
+                    logCount = 0;
+                    bosstimecheck = true;
+                    BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").GetComponent<UILabel>().text = "Stage " + waveCount;
+                    StartCoroutine(delaysetactive(0.0f, BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").gameObject, true));
+                    if (needBossSelect)
+                    {
+                        BattleManager.instance.battleObj.transform.Find("BossSelectFX").gameObject.SetActive(false);
+                        int BossWaveItv = 10;
+                        if (isAwakeMode)
+                            BossWaveItv = 5;
+
+                        if (waveCount > (BossWaveItv * 5))
+                        {
+                            string[] SpawnRate = GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.BossSpawnRate, (int)GameDataManager.systemDataTemplate_.value1].Split('#');
+                            List<int> SpawnRateList = new List<int>();
+                            for (int i = 0; i < SpawnRate.Length; ++i)
+                                SpawnRateList.Add(int.Parse(SpawnRate[i]));
+                            int baseCheckValue = BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.globalSeed, 0, 10000);
+                            BattleManager.instance.nextBosskind = Monster.boss_kind.none;
+                            int CheckValue = 0;
+                            for (int i = 0; i < SpawnRateList.Count; ++i)
+                            {
+                                if (CheckValue + SpawnRateList[i] >= baseCheckValue)
+                                {
+                                    BattleManager.instance.nextBosskind = (Monster.boss_kind)i + 1;
+                                    break;
+                                }
+
+                                CheckValue += SpawnRateList[i];
+                            }
+
+                            if (BattleManager.instance.nextBosskind == Monster.boss_kind.none)
+                            {
+                                BattleManager.instance.nextBosskind = Monster.boss_kind.medusa;
+                                Debug.LogError("Rate Data Error");
+                            }
+                        }
+                        else
+                        {
+                            BattleManager.instance.nextBosskind = (Monster.boss_kind)monstergenerate.instance.findCoopBoss(isAwakeMode);
+                        }
+                        needBossSelect = false;
+
+                        if (monstergenerate.instance.isRageMode == true)
+                        {
+                            BattleManager.instance.battleObj.transform.Find("BossSelectFX/NextBossIcon").gameObject.SetActive(false);
+
+                            List<Monster.boss_kind> tempList = new List<Monster.boss_kind>();
+                            for (int i = 1; i < (int)Monster.boss_kind.max; ++i)
+                            {
+                                tempList.Add((Monster.boss_kind)i);
+                            }
+                            tempList.Remove(BattleManager.instance.nextBosskind);
+                            BattleManager.instance.nextBosskind2 = tempList[BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.globalSeed, 0, tempList.Count)];
+
+                            Transform IconsTr = BattleManager.instance.battleObj.transform.Find("BossSelectFX/RageModeBossIcon");
+                            IconsTr.gameObject.SetActive(true);
+                            int iSpriteIndex = (int)BattleManager.instance.nextBosskind - 1;
+                            IconsTr.Find("NextBossIcon1").GetComponent<UISprite>().spriteName = "Boss_0" + (((iSpriteIndex + 0) % ((int)Monster.boss_kind.max - 1)) + 1) + "_Simple";
+                            iSpriteIndex = (int)BattleManager.instance.nextBosskind2 - 1;
+                            IconsTr.Find("NextBossIcon2").GetComponent<UISprite>().spriteName = "Boss_0" + (((iSpriteIndex + 0) % ((int)Monster.boss_kind.max - 1)) + 1) + "_Simple";
+                        }
+                        else
+                        {
+                            BattleManager.instance.battleObj.transform.Find("BossSelectFX/NextBossIcon").gameObject.SetActive(true);
+                            BattleManager.instance.battleObj.transform.Find("BossSelectFX/RageModeBossIcon").gameObject.SetActive(false);
+                            BattleManager.instance.battleObj.transform.Find("BossSelectFX/NextBossIcon").GetComponent<UISprite>().spriteName = "Boss_0" + ((int)BattleManager.instance.nextBosskind).ToString() + "_Simple";
+                        }
+
+                    }
+                    if (!BattleManager.instance.battleObj.transform.Find("BossSelectFX").gameObject.activeSelf)
+                    {
+                        SoundManager.Instance.Play(SoundType.Battle_Start);
+                        StartCoroutine(delaysetactive(0.0f, BattleManager.instance.battleObj.transform.Find("BossSelectFX").gameObject, true));
+                    }
+
+                    BattleManager.instance.InitWaveData();
+                }
+                break;
+            case stage_type.bossselect:
+                {
+                    int iAwakeModeEndWave = int.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.AwakeCoopEnterData, (int)GameDataManager.systemDataTemplate_.value3]);
+                    if (isAwakeMode && WaveCount > iAwakeModeEndWave)
+                    {
+                        changestage(stage_type.finish);
+                        return;
+                    }
+
+                    string userkey = string.Compare(my_player_me.userid, my_player_you.userid) > 0 ? my_player_me.userid + "#" + my_player_you.userid : my_player_you.userid + "#" + my_player_me.userid;
+                    userkey += roomID;
+                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.waveCheck, waveCount.ToString(), userkey, false, false);
+
+                    BattleManager.instance.InitWaveData();
+                    if (monstergenerate.instance && monstergenerate.instance.KillMonsterDict.Count > 0)
+                    {
+                        string monsterIDs = "";
+                        string monsterValues = "";
+                        foreach (var item in monstergenerate.instance.KillMonsterDict)
+                        {
+                            monsterIDs += item.Key + "#";
+                            monsterValues += item.Value.ToString() + "#";
+                        }
+                        monstergenerate.instance.KillMonsterDict.Clear();
+                        ProcessButton.instance.sendtotalpacket(Totalpacket_type.killmonster, monsterIDs, monsterValues, false, false);
+                    }
+                    string sendDailyQuestIndex = "";
+                    string sendDailyQuestAdd = "";
+
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.normaldamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.normalDamage.ToString() + "#";
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.cridamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.criDamage.ToString() + "#";
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.runedamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.runeDamage.ToString() + "#";
+
+                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.questClear, sendDailyQuestIndex, sendDailyQuestAdd);
+
+                    my_player_me.normalDamage = 0;
+                    my_player_me.criDamage = 0;
+                    my_player_me.runeDamage = 0;
+                    if (monstergenerate.instance.WaveCount >= 30 && monstergenerate.instance.WaveCount % 5 == 0)
+                    {
+                        string sendLog = "[WaveInfo - coop]";
+                        sendLog += string.Format("My ID : {0} SP :{1}  Enemy ID : {2}\n", my_player_me.userid, my_player_me.sp_mysp, my_player_you.userid);//상대방 sp는 상대가 알아서 보낼꺼다
+                        sendLog += string.Format("Wave : {0}\n", monstergenerate.instance.WaveCount.ToString());
+                        sendLog += string.Format("OverDamageCount : {0}\n", BattleManager.instance.OverDamageCount.ToString());
+                        sendLog += string.Format("MaxDamage : {0}\n", BattleManager.instance.MaxDamage.ToString());
+                        NetworkManager.instance.SendPacket(PACKETTYPE.PT_ServerLog, sendLog, false);
+                        BattleManager.instance.OverDamageCount = 0;
+                        BattleManager.instance.MaxDamage = 0;
+                    }
+
+                    if (needBossFXactiveFalse)
+                    {
+                        BattleManager.instance.battleObj.transform.Find("BossSelectFX").gameObject.SetActive(false);
+                        needBossFXactiveFalse = false;
+                    }
+                    //for (int i = 0; i < 15; ++i)
+                    //{
+                    //    if (my_player_me.tile_character[i])
+                    //        my_player_me.tile_character[i].GetComponent<Character>().ResetAttackSpeed();
+                    //    if (my_player_you.tile_character[i])
+                    //        my_player_you.tile_character[i].GetComponent<Character>().ResetAttackSpeed();
+                    //}
+
+                    if (ObjectPoolManager.instance.playerMonsterList != null)
+                    {
+                        for (int i = 0; i < ObjectPoolManager.instance.playerMonsterList.Count; ++i)
+                        {
+                            Monster item = ObjectPoolManager.instance.playerMonsterList[i];
+                            item.DestroyMonster();
+                            item.gameObject.SetActive(false);
+                        }
+                    }
+
+                    if (ObjectPoolManager.instance.enemyMonsterList != null)
+                    {
+                        for (int i = 0; i < ObjectPoolManager.instance.enemyMonsterList.Count; ++i)
+                        {
+                            Monster item = ObjectPoolManager.instance.enemyMonsterList[i];
+                            item.DestroyMonster();
+                            item.gameObject.SetActive(false);
+                        }
+                    }
+
+
+                    nextStage = true;
+                    for (int i = 0; i < (int)playerinfo.monsterID.Max; i++)
+                    {
+                        monstergenerate.instance.SpawnCountList[i] = 0;
+                        monstergenerate.instance.SpawnCountList_CoopEnemy[i] = 0;
+                    }
+                    //waveCount++;
+
+                    int nextWaveIncreasHPMultiple = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(monstergenerate.instance.CurrentMode, GameDataManager.monsterGeneratorTemplate_.Next_Wave_Increase_HP));
+
+                    monstergenerate.instance.WaveCount = waveCount;
+
+                    if (monstergenerate.instance.WaveCount != 1)
+                        monstergenerate.instance.WaveDefaultHP = (int)((float)monstergenerate.instance.LastSpawndMonsterHP * (float)nextWaveIncreasHPMultiple / 10000.0f);
+
+                    StartCoroutine(StartWavePrevAction(waveCount));
+                    BattleManager.instance.PlayBossSound();
+                    //StartCoroutine(StartWavePrevAction());
+                }
+                break;
+            case stage_type.bossspawn_prevReaction:
+                {
+                    BattleManager.instance.InitWaveData();
+
+                    if (ObjectPoolManager.instance.playerMonsterList != null)
+                    {
+                        for (int i = 0; i < ObjectPoolManager.instance.playerMonsterList.Count; ++i)
+                        {
+                            Monster item = ObjectPoolManager.instance.playerMonsterList[i];
+                            item.movetype = 100;
+                            item.isfield = false;
+                        }
+                    }
+
+                    if (ObjectPoolManager.instance.enemyMonsterList != null)
+                    {
+                        for (int i = 0; i < ObjectPoolManager.instance.enemyMonsterList.Count; ++i)
+                        {
+                            Monster item = ObjectPoolManager.instance.enemyMonsterList[i];
+                            item.movetype = 100;
+                            item.isfield = false;
+                        }
+                    }
+                }
+                break;
+            case stage_type.bossspawn:
+                {
+                    if (needBossSelect) return;
+                    BattleManager.instance.InitWaveData();
+                    SoundManager.Instance.PlaySoundStartPoint(SoundType.Battle_Boss_Respawn,1f);
+                    int monsterHpSum = 1;
+                    isBossSpawn = false;
+                    BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").GetComponent<UILabel>().text = "Stage " + waveCount;
+                    StartCoroutine(delaysetactive(0.0f, BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").gameObject, true));
+                    StartCoroutine(monstergenerate.instance.SpawnBossForce_Coop());
+                    needBossSelect = true;
+                    needBossFXactiveFalse = true;
+                    int bossBgmSoundNum = (int)BattleManager.instance.nextBosskind + 3;
+                    SoundType bossBgm = (SoundType)bossBgmSoundNum;
+                    if (bossBgm >= SoundType.BGM_Medusa && bossBgm <= SoundType.BGM_Minotaur)
+                        StartCoroutine(SoundManager.Instance.BGMFadeInOutSoundChange(bossBgm, 0.1f));
+                }
+                break;
+            case stage_type.bosstime:
+                {
+                    sendWaitingPartner = false;
+                    SendTotalTime = 0.0f;
+                    logCount = 0;
+                    isBossSpawn = true;
+                    BattleManager.instance.InitWaveData();
+                }
+                break;
+            case stage_type.finish:
+                {
+                    BattleManager.instance.InitWaveData();
+                    Destroy(BattleManager.instance.Indicator);
+                    ProcessButton.instance.isShowReconnectMessage = true;
+                    BattleManager.instance.isFriendMatch = false;
+                    if (monstergenerate.instance && monstergenerate.instance.KillMonsterDict.Count > 0)
+                    {
+                        string monsterIDs = "";
+                        string monsterValues = "";
+                        foreach (var item in monstergenerate.instance.KillMonsterDict)
+                        {
+                            monsterIDs += item.Key + "#";
+                            monsterValues += item.Value.ToString() + "#";
+                        }
+                        monstergenerate.instance.KillMonsterDict.Clear();
+                        ProcessButton.instance.sendtotalpacket(Totalpacket_type.killmonster, monsterIDs, monsterValues, false, false);
+                    }
+
+                    string sendDailyQuestIndex = "";
+                    string sendDailyQuestAdd = "";
+
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.normaldamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.normalDamage.ToString() + "#";
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.cridamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.criDamage.ToString() + "#";
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.runedamage).ToString() + "#";
+                    sendDailyQuestAdd += my_player_me.runeDamage.ToString() + "#";
+
+                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.questClear, sendDailyQuestIndex, sendDailyQuestAdd);
+
+                    my_player_me.normalDamage = 0;
+                    my_player_me.criDamage = 0;
+                    my_player_me.runeDamage = 0;
+
+                    if (BattleManager.instance.battleObj)
+                    {
+                        if (!resultobj)
+                        {
+                            ProcessButton.instance.ShowBattleChat(false);
+
+                            bool iswin = false;
+                            if (my_player_me.hp > 0)
+                                iswin = true;
+
+                            SoundManager.Instance.StopBGM();
+                            SoundManager.Instance.Play(SoundType.Battle_Win);
+
+                            resultobj = ProcessButton.instance.GetPrefabsBase("Dice/Result_Cooperation", BattleManager.instance.battleObj.transform, false);
+                            if(isAwakeMode)
+                            {
+                                resultobj.transform.Find("GetKey/Key").GetComponent<UISprite>().spriteName = "IconKeyAwake";
+
+                                resultobj.transform.Find("GetKey/BgKey/Label (1)").gameObject.SetActive(false);
+                                resultobj.transform.Find("GetKey/BgKey/BuffKey").gameObject.SetActive(false);
+                                resultobj.transform.Find("GetKey/BgKey/BuffTxt").gameObject.SetActive(false);
+                                resultobj.transform.Find("PlusMinus").gameObject.SetActive(false);
+                                resultobj.transform.Find("VIPCover").gameObject.SetActive(false);
+                                resultobj.transform.Find("GetKey/TotalGetKey/TotalKey").GetComponent<UISprite>().spriteName = "IconKeyAwake";
+                            }
+                            else
+                            {
+                                resultobj.transform.Find("VIPCover").gameObject.SetActive(true);
+                                resultobj.transform.Find("PlusMinus").gameObject.SetActive(true);
+                            }
+
+                            ProcessButton.instance.SetCustomFontText(
+                                my_player_you.EquipCustumFontID,
+                                resultobj.transform.Find("Dummy/player/UserInfo/id").GetComponent<UILabel>(),
+                                my_player_you.nickname);
+                            ProcessButton.instance.SetCustomFontText(
+                                my_player_you.EquipCustumFontID,
+                                resultobj.transform.Find("Dummy/enemy/UserInfo/id").GetComponent<UILabel>(),
+                                my_player_you.nickname);
+
+                            resultobj.transform.Find("Dummy/player/WinRate/id").GetComponent<UILabel>().text = GameManager.instance.GetPlayerinfo().GetPlayerWinRate() + "%";
+
+                            string MedalSpriteName = "Medal";
+
+                            string myMedalSpriteName = "";
+                            string youMedalSpriteName = "";
+                            if (my_player_me.grade > 1)
+                            {
+                                myMedalSpriteName = MedalSpriteName + my_player_you.grade.ToString();
+                            }
+                            else
+                            {
+                                myMedalSpriteName = MedalSpriteName;
+                            }
+
+                            if (my_player_you.grade > 1)
+                            {
+                                youMedalSpriteName = MedalSpriteName + my_player_you.grade.ToString();
+                            }
+                            else
+                            {
+                                youMedalSpriteName = MedalSpriteName;
+                            }
+
+                            resultobj.transform.Find("Dummy/player/UserInfo/IconClass").GetComponent<UISprite>().spriteName = youMedalSpriteName;
+                            resultobj.transform.Find("Dummy/enemy/UserInfo/IconClass").GetComponent<UISprite>().spriteName = youMedalSpriteName;
+                            resultobj.transform.Find("Dummy/player/GetTrophy/id").GetComponent<UILabel>().text = my_player_you.trophy;
+                            resultobj.transform.Find("Dummy/enemy/GetTrophy/id").GetComponent<UILabel>().text = my_player_you.trophy;
+                            resultobj.transform.Find("RewardReturn").gameObject.SetActive(false);
+                            resultobj.transform.Find("X").gameObject.SetActive(false);
+                            int vip = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.vip);
+                            int coopPass = 0;
+                            resultobj.transform.Find("PlusMinus/Label").GetComponent<UILabel>().text = string.Format(TextManager.Instance.GetString("PB_TEXT_VIPBENEFIT_COOP"), checkCount.ToString(), coopPass.ToString());
+
+                            if (vip > 0)
+                            {
+                                coopPass = int.Parse(GameDataManager.viptemplate[(int)vip, (int)GameDataManager.vip_.BenefitValue8]);
+                                if (coopPass > 0)
+                                    resultobj.transform.Find("VIPCover").gameObject.SetActive(false);
+                            }
+                            resultobj.transform.Find("GetKey/BtnRule").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                            {
+                                ProcessButton.instance.MessageBox_TextKey(false, "", "PB_TEXT_COOP_RESULT_TITLE", "PB_TEXT_COOP_RESULT_TEXT");
+                            }));
+                            resultobj.transform.Find("Dummy/player/Good/Cover").gameObject.SetActive(false);
+                            resultobj.transform.Find("Dummy/player/BanPlayer/Cover").gameObject.SetActive(false);
+                            resultobj.transform.Find("Dummy/player/GoodRate/id").GetComponent<UILabel>().text = BattleManager.instance.EnemyGoodAmount.ToString();
+                            resultobj.transform.Find("Dummy/player/Good/BtnGood").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                            {
+                                resultobj.transform.Find("Dummy/player/Good/Cover").gameObject.SetActive(true);
+                                resultobj.transform.Find("Dummy/player/GoodRate/id").GetComponent<UILabel>().text = (BattleManager.instance.EnemyGoodAmount + 1).ToString();
+                                ProcessButton.instance.sendtotalpacket(Totalpacket_type.GoodAmount, my_player_you.userid, "1", true, false);
+                            }));
+                            resultobj.transform.Find("Dummy/player/BanPlayer/BtnBanPlayer").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                            {
+                                ProcessButton.instance.OpenReportPopUpmain(resultobj, my_player_you.nickname,0);
+                            }));
+                            int coopCount = (int)GameManager.instance.GetPlayerinfo().Data_int[(int)playerinfo.ST_characterdata_int.coop_enter];
+                            int passCoopCount = (int)GameManager.instance.GetPlayerinfo().Data_int[(int)playerinfo.ST_characterdata_int.premiumPlus];
+                            string multiple = GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.premiumPlusCount, (int)GameDataManager.systemDataTemplate_.value2];
+
+                            resultobj.transform.Find("TotalScore/HighWave").GetComponent<UILabel>().text = "Stage " + waveCount.ToString();
+                            resultobj.transform.Find("GetKey").gameObject.SetActive(false);
+                            resultobj.transform.Find("GetKey/BgKey/Label").GetComponent<UILabel>().text = (waveCount * int.Parse(multiple)).ToString();
+                            
+                            string EnemyInfo = my_player_you.nickname + "#" + my_player_you.trophy + "#" + my_player_you.combatPower + "#";
+
+                            List<Transform> diceList = resultobj.transform.Find("Dummy/player/Dice").GetComponent<UIGrid>().GetChildList();
+                            List<Transform> diceList_Enemy = resultobj.transform.Find("Dummy/enemy/Dice").GetComponent<UIGrid>().GetChildList();
+                            int myBuffDiceCount = 0;
+                            for (int i = 0; i < 5; ++i)
+                            {
+                                UISprite myDiceSprite = diceList[i].Find("Character").GetComponent<UISprite>();
+                                int myDiceId = my_player_you.deck_character[i].GetComponent<Character>().id;
+                                int myDiceskinId = my_player_you.deck_character[i].GetComponent<Character>().skin;
+
+                                UISprite yourDiceSprite = diceList_Enemy[i].Find("Character").GetComponent<UISprite>();
+                                int yourDiceId = my_player_you.deck_character[i].GetComponent<Character>().id;
+                                int yourDiceskinId = my_player_you.deck_character[i].GetComponent<Character>().skin;
+
+                                UISprite mySpecailSprite = getcombatdeckobj(i).transform.Find("DragChar").GetComponent<UISprite>();
+                                BattleManager.instance.SetDiceIcon(mySpecailSprite, myDiceId, myDiceskinId);
+
+                                BattleManager.instance.SetDiceIcon(myDiceSprite, myDiceId, myDiceskinId);
+                                BattleManager.instance.SetDiceIcon(yourDiceSprite, yourDiceId, yourDiceskinId);
+
+                                EnemyInfo += my_player_you.deck_character[i].GetComponent<Character>().id + "*";
+                                EnemyInfo += my_player_you.deck_character[i].GetComponent<Character>().skin + "&";
+                                string grade = GameManager.instance.GetDiceTemplate(my_player_you.deck_character[i].GetComponent<Character>().id, GameDataManager.diceTemplate_.grade);
+
+                                diceList_Enemy[i].Find("LegendDiceBorder").gameObject.SetActive(false);
+                                switch (grade)
+                                {
+                                    case "4":
+                                        diceList_Enemy[i].Find("LegendDiceBorder").gameObject.SetActive(true);
+                                        break;
+                                }
+                                if (ProcessButton.instance.buffPickList.Contains((my_player_me.deck_character[i].GetComponent<Character>().id).ToString()))
+                                {
+                                    diceList[i].Find("BgBan").gameObject.SetActive(true);
+                                }
+
+                                grade = GameManager.instance.GetDiceTemplate(my_player_me.deck_character[i].GetComponent<Character>().id, GameDataManager.diceTemplate_.grade);
+                                string tribe = GameManager.instance.GetDiceTemplate(my_player_me.deck_character[i].GetComponent<Character>().id, GameDataManager.diceTemplate_.tribe);
+                                diceList[i].Find("LegendDiceBorder").gameObject.SetActive(false);
+                                switch (grade)
+                                {
+                                    case "4":
+                                        diceList[i].Find("LegendDiceBorder").gameObject.SetActive(true);
+                                        break;
+                                    case "5":
+                                        {
+                                            int diceClass = my_player_me.deck_character[i].GetComponent<Character>().diceClass;
+                                            GameManager.instance.DiceAwakeFXOn(diceList[i].gameObject, diceClass);
+                                        }
+                                        break;
+                                }
+                                if (tribe == "0")
+                                {
+                                    diceList[i].Find("IconUnHuman").gameObject.SetActive(false);
+                                    diceList[i].Find("IconHuman").gameObject.SetActive(true);
+                                }
+                                else if (tribe == "1")
+                                {
+                                    diceList[i].Find("IconUnHuman").gameObject.SetActive(true);
+                                    diceList[i].Find("IconHuman").gameObject.SetActive(false);
+                                }
+                                if (ProcessButton.instance.buffPickList != null && ProcessButton.instance.buffPickList.Count > 0)
+                                {
+                                    if (ProcessButton.instance.buffPickList.Contains(my_player_you.deck_character[i].GetComponent<Character>().id.ToString()))
+                                        ++myBuffDiceCount;
+                                }                                    
+                            }
+
+                            if (ProcessButton.instance.userintdata(playerinfo.ST_characterdata_int.premiumPlus) > 0 && isAwakeMode == false)
+                            {
+                                resultobj.transform.Find("GetKey/BgKey/premium").gameObject.SetActive(true);
+                            }
+                            else
+                            {
+                                resultobj.transform.Find("GetKey/BgKey/premium").gameObject.SetActive(false);
+                            }
+
+                            int currentCount = 1;
+                            int rewardCheckCount = 1;
+                            EnemyInfo += "#" + my_player_you.userid;
+                            string attackerID = my_player_me.userid;
+                            if (my_player_me.FullDamage < my_player_you.FullDamage)
+                                attackerID = my_player_you.userid;
+
+                            if(isAwakeMode)
+                                ProcessButton.instance.sendtotalpacket5(Totalpacket_type.BattleRewardAwakeCard, waveCount.ToString(), true.ToString() + "#" + roomID + "#" + my_player_you.userid, EnemyInfo, BattleManager.instance.isSoloPlaying.ToString(), attackerID);
+                            else
+                                ProcessButton.instance.sendtotalpacket5(Totalpacket_type.BattleRewardCard, waveCount.ToString(), true.ToString() + "#" + roomID + "#" + my_player_you.userid, EnemyInfo, BattleManager.instance.isSoloPlaying.ToString(), attackerID);
+
+                            rewardCard = GameManager.instance.getCoopCard(Battle_coop.instance.waveCount);
+                            GameManager.instance.waveFinishCardCount = rewardCard;
+                            resultobj.transform.Find("Button").gameObject.SetActive(true);                           
+
+                            string worldMapData = GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.worldmapContentsLv, (int)GameDataManager.systemDataTemplate_.value2];
+                            string[] checkWorldMap = worldMapData.Split('#');
+
+                            if (checkWorldMap[1] == "0")
+                                resultobj.transform.Find("BtnDeckSave").gameObject.SetActive(false);
+                            else
+                            {
+                                resultobj.transform.Find("BtnDeckSave").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                                {
+                                    ProcessButton.instance.OpnePunitiveDeckSetting(my_player_me, true);
+                                    SoundManager.Instance.Play(SoundType.SE_ButtonClick);
+                                }));
+                            }
+
+                            ProcessButton.instance.AddOnClickEvent(resultobj.transform.Find("Button").GetComponent<UIButton>(), "onbuttonMulti", Button_type.finish1, typeof(Button_type), (int)stagetype, typeof(int));
+                            BattleManager.instance.CreateEnemyPopup(resultobj.transform, my_player_you,iswin,true);
+
+                            if (!GameManager.instance.friendDict.ContainsKey(my_player_you.userid))
+                            {
+                                resultobj.transform.Find("FriendRequest").gameObject.SetActive(true);
+                                resultobj.transform.Find("FriendRequest").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                                {
+                                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.processSociety, "2", my_player_you.userid);//친구 요청
+                                }));
+                            }
+                            else
+                                resultobj.transform.Find("FriendRequest").gameObject.SetActive(false);
+
+
+                            resultobj.transform.Find("PlusMinus/BtnPlus/Btn").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                            {
+                                BtnPlus();
+                            }));
+                            resultobj.transform.Find("PlusMinus/BtnMinus/Btn2").GetComponent<UIButton>().onClick.Add(new EventDelegate(() =>
+                            {
+                                BtnMinus();
+                            }));
+
+                            string sendData = "";
+
+                            for (int i = 0; i < 5; ++i)
+                            {
+                                Character deckCharacter = BattleManager.instance.GetPlayerbyBattle(true).deck_character[i].GetComponent<Character>();
+                                sendData += deckCharacter.iTotalCharacterNormalDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterCriDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterRedRuneDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterBlueRuneDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterYellowRuneDamage + "|";
+
+                                deckCharacter = BattleManager.instance.GetPlayerbyBattle(false).deck_character[i].GetComponent<Character>();
+                                sendData += deckCharacter.iTotalCharacterNormalDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterCriDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterRedRuneDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterBlueRuneDamage + "|";
+                                sendData += deckCharacter.iTotalCharacterYellowRuneDamage + "|";
+                            }
+
+                            ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_DamageMeterInfo_Req, sendData);
+                            ProcessButton.instance.AddOnClickEvent(resultobj.transform.Find("DamageMeter/BgMeter").GetComponent<UIButton>(), "CreateDamageMeterPopup");
+                        }
+                    }
+
+                    GameManager.instance.StopInvokeBattleStream();
+                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.SetBattleInfo, "0", "0");
+                    ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_SetUserState, "0", 1);
+                }
+                break;
+            case stage_type.readyToStart:
+                {
+                    if (!ProcessButton.instance.LoadingObj)
+                    {
+                        sendWaitingPartner = false;
+                        ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_waitForStart, "");
+                    }
+                       
+                    else if (BattleManager.instance.battleObj)
+                        BattleManager.instance.battleObj.transform.Find("GetKey").gameObject.SetActive(false);
+                }
+                break;
+            case stage_type.reconnect:
+                {
+                    StartPowUpNoUse = false;
+                    ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.pt_pause, "0");
+                }
+                break;
+        }
+        Debug.Log(string.Format("ChangeStage End - {0} {1}", type.ToString(), waveCount));
+        stagetype = type;
+    }
+    public int checkCount = 0;
+    public void BtnPlus()
+    {
+        int coopCount = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.coop_enter);
+        int coopPass = 0;
+        int vip = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.vip);
+        if (vip > 0)
+        {
+            coopPass = int.Parse(GameDataManager.viptemplate[(int)vip, (int)GameDataManager.vip_.BenefitValue8]);
+            if (coopPass > coopCount)
+                coopPass = coopCount;
+            int hiddenMinCount = ProcessButton.instance.CheckHiddenHeroMinCount();
+            if (hiddenMinCount > 0 && coopPass > hiddenMinCount)
+                coopPass = hiddenMinCount;
+        }
+        if (checkCount >= coopPass)
+            return;
+
+        checkCount += 1;
+        UpdateGetKey();
+    }
+
+    public void BtnMinus()
+    {
+        if (checkCount <= 0)
+            return;
+
+        checkCount -= 1;
+        UpdateGetKey();
+    }
+
+    private void UpdateGetKey()
+    {
+        int rewardCard = GameManager.instance.getCoopCard(waveCount);
+
+        int coopCount = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.coop_enter);
+        int passCoopCount = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.premiumPlus);
+        int coopPass = 0;
+        bool bPrimium = false;
+        if (resultobj.transform.Find("GetKey/BgKey/premium").gameObject.activeSelf)
+            bPrimium = true;
+        int vip = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.vip);
+        if (vip > 0)
+        {
+            coopPass = int.Parse(GameDataManager.viptemplate[(int)vip, (int)GameDataManager.vip_.BenefitValue8]);
+            if (coopPass > coopCount)
+                coopPass = coopCount;
+            if (coopPass > coopCount)
+                coopPass = coopCount;
+            int hiddenMinCount = ProcessButton.instance.CheckHiddenHeroMinCount();
+            if (hiddenMinCount > 0 && coopPass > hiddenMinCount)
+                coopPass = hiddenMinCount;
+        }
+        int multiple = int.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.premiumPlusCount, (int)GameDataManager.systemDataTemplate_.value2]);
+        int buffkey = GameManager.instance.labelCount;
+        resultobj.transform.Find("PlusMinus/Label").GetComponent<UILabel>().text = string.Format(TextManager.Instance.GetString("PB_TEXT_VIPBENEFIT_COOP"), checkCount.ToString(), coopPass.ToString());
+
+        int baseReward = int.Parse(resultobj.transform.Find("GetKey/BgKey/Label").GetComponent<UILabel>().text);
+        int addReward = int.Parse(resultobj.transform.Find("GetKey/BgKey/Label (1)").GetComponent<UILabel>().text);
+
+        if ((passCoopCount == 0 && !bPrimium) || passCoopCount > checkCount)
+            resultobj.transform.Find("GetKey/TotalGetKey/TotalKeyNumber").GetComponent<UILabel>().text = (((checkCount + 1) * baseReward) + ((checkCount + 1) * addReward)).ToString();
+        else
+        {
+            float notPremiumReward = baseReward * 0.5f;
+            float notPremiumAddReward = addReward * 0.5f;
+            int notPremiumCheckCount = checkCount - passCoopCount;
+            resultobj.transform.Find("GetKey/TotalGetKey/TotalKeyNumber").GetComponent<UILabel>().text = (((checkCount + 1 - notPremiumCheckCount) * baseReward) + ((checkCount + 1 - notPremiumCheckCount) * addReward) +
+                                                                                                    (notPremiumCheckCount * notPremiumReward) + (notPremiumCheckCount * notPremiumAddReward)).ToString();
+        }
+
+        int goodsValueData_L = int.Parse(GameDataManager.GoodsInfoTemplate[int.Parse(Util.GetGoodsID(playerinfo.ST_characterdata_int.CoopMarkBuff_L_Goods)), (int)GameDataManager.GoodsInfoTemplate_.value2]);
+        int goodsValueData_M = int.Parse(GameDataManager.GoodsInfoTemplate[int.Parse(Util.GetGoodsID(playerinfo.ST_characterdata_int.CoopMarkBuff_M_Goods)), (int)GameDataManager.GoodsInfoTemplate_.value2]);
+        int goodsValueData_S = int.Parse(GameDataManager.GoodsInfoTemplate[int.Parse(Util.GetGoodsID(playerinfo.ST_characterdata_int.CoopMarkBuff_S_Goods)), (int)GameDataManager.GoodsInfoTemplate_.value2]);
+
+        Transform trans = resultobj.transform.Find("ScrollTotal/Grid");
+        if (trans != null)
+        {
+            for (int nLoop = 0; nLoop < trans.childCount; nLoop++)
+            {
+                bool bType1 = true;
+                if (trans.GetChild(nLoop).name == "Goods")
+                {
+                    Transform item = trans.GetChild(nLoop).Find("type1");
+                    if (!item.gameObject.activeSelf)
+                    {
+                        item = trans.GetChild(nLoop).Find("type2");
+                        bType1 = false;
+                    }
+
+                    string icon = GameDataManager.GetGoodsInfoTemplateData((int)playerinfo.goodsType.CoopMark, (int)GameDataManager.GoodsInfoTemplate_.icon);
+
+                    if (icon != item.Find("Sprite").GetComponent<UISprite>().spriteName)
+                        continue;
+
+                    int coopMarkBuff_L = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.CoopMarkBuff_L);
+                    int coopMarkBuff_M = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.CoopMarkBuff_M);
+                    int coopMarkBuff_S = (int)GameManager.instance.userdata(playerinfo.ST_characterdata_int.CoopMarkBuff_S);
+
+                    int totalUseCount = 0;
+                    int coopMarkBuffUseCount_L = 0;
+                    int coopMarkBuffUseCount_M = 0;
+                    int coopMarkBuffUseCount_S = 0;
+
+                    int remainCheckCount = checkCount;
+
+                    if (remainCheckCount > 0 && coopMarkBuff_L > 0)
+                    {
+                        if (coopMarkBuff_L >= remainCheckCount)
+                        {
+                            coopMarkBuffUseCount_L = remainCheckCount;
+                            totalUseCount += remainCheckCount;
+                            remainCheckCount -= remainCheckCount;
+                        }
+                        else
+                        {
+                            coopMarkBuffUseCount_L = coopMarkBuff_L;
+                            totalUseCount += coopMarkBuff_L;
+                            remainCheckCount -= coopMarkBuff_L;
+                        }
+                    }
+
+                    if (remainCheckCount > 0 && coopMarkBuff_M > 0)
+                    {
+                        if (coopMarkBuff_M >= remainCheckCount)
+                        {
+                            coopMarkBuffUseCount_M = remainCheckCount;
+                            totalUseCount += remainCheckCount;
+                            remainCheckCount -= remainCheckCount;
+                        }
+                        else
+                        {
+                            coopMarkBuffUseCount_M = coopMarkBuff_M;
+                            totalUseCount += coopMarkBuff_M;
+                            remainCheckCount -= coopMarkBuff_M;
+                        }
+                    }
+
+                    if (remainCheckCount > 0 && coopMarkBuff_S > 0)
+                    {
+                        if (coopMarkBuff_S >= remainCheckCount)
+                        {
+                            coopMarkBuffUseCount_S = remainCheckCount;
+                            totalUseCount = remainCheckCount;
+                            remainCheckCount -= remainCheckCount;
+                        }
+                        else
+                        {
+                            coopMarkBuffUseCount_S = coopMarkBuff_S;
+                            totalUseCount += coopMarkBuff_S;
+                            remainCheckCount -= coopMarkBuff_S;
+                        }
+                    }
+
+                    int coopMarkEventTotalReward = GameManager.instance.coopMarkEventTotalReward;
+                    int coopMarkEventBaseReward = GameManager.instance.coopMarkEventBaseReward;
+
+                    int bonusReward_L = (int)((double)coopMarkEventBaseReward * (goodsValueData_L / 10000.0f));
+                    int bonusReward_M = (int)((double)coopMarkEventBaseReward * (goodsValueData_M / 10000.0f));
+                    int bonusReward_S = (int)((double)coopMarkEventBaseReward * (goodsValueData_S / 10000.0f));
+
+                    coopMarkEventTotalReward = coopMarkEventTotalReward + (coopMarkEventBaseReward * checkCount) + (bonusReward_L * coopMarkBuffUseCount_L) + (bonusReward_M * coopMarkBuffUseCount_M) + (bonusReward_S * coopMarkBuffUseCount_S);
+                    item.Find("Label").GetComponent<UILabel>().text = string.Format("+{0}", coopMarkEventTotalReward);
+
+                    if (bType1)
+                        item.Find("number").GetComponent<UILabel>().text = ((coopMarkBuff_L + coopMarkBuff_M + coopMarkBuff_S) - totalUseCount).ToString();
+                }
+                else if (trans.GetChild(nLoop).name.Contains("HiddenHero"))
+                {
+                    if (!BattleManager.instance.HiddenHeroCount.ContainsKey(trans.GetChild(nLoop).name)) continue;
+
+                    int basevalue = BattleManager.instance.HiddenHeroCount[trans.GetChild(nLoop).name];
+                    if (basevalue <= 0) continue;
+                    Transform item = trans.GetChild(nLoop).Find("type2");
+                    if (!item.gameObject.activeSelf)
+                    {
+                        continue;
+                    }
+                    item.Find("Label").GetComponent<UILabel>().text = string.Format("+{0}", basevalue * (checkCount + 1));
+                }
+            }
+        }
+
+    }
+   
+    public class WaitForSecondsRT : CustomYieldInstruction
+    {
+        float m_Time;
+        public override bool keepWaiting
+        {
+            get { return (m_Time -= Time.unscaledDeltaTime) > 0; }
+        }
+        public WaitForSecondsRT(float aWaitTime)
+        {
+            m_Time = aWaitTime;
+        }
+        public WaitForSecondsRT NewTime(float aTime)
+        {
+            m_Time = aTime;
+            return this;
+        }
+    }
+
+    IEnumerator StartWavePrevAction(int waveCount)
+    {
+        bosstimecheck = false;
+        isBossSpawn = false;
+        rewardCard = GameManager.instance.getCoopCard(Battle_coop.instance.waveCount);
+        BattleManager.instance.battleObj.transform.Find("GetKey").gameObject.SetActive(true);
+        BattleManager.instance.battleObj.transform.Find("GetKey/Number").GetComponent<UILabel>().text = rewardCard.ToString();
+        if (monstergenerate.instance.WaveCount == 1)
+        {
+            BattleManager.instance.SpawnFieldRunesCallCount = 0;
+            BattleManager.instance.isRuneSpawnComplete = false;
+            StartCoroutine(BattleManager.instance.SpawnFieldRunes(true));
+            StartCoroutine(BattleManager.instance.SpawnFieldRunes(false));
+
+            monstergenerate.instance.InitSpawnTime();
+        }
+
+        int StartDelay = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(monstergenerate.instance.CurrentMode, GameDataManager.monsterGeneratorTemplate_.StartSpawnMonsterTime));
+        yield return new WaitForSecondsRT(StartDelay / 1000.0f);
+        if (!BattleManager.instance.battleObj) yield break;
+        BattleManager.instance.battleObj.transform.Find("BossSelectFX/Label").gameObject.SetActive(false);
+        BattleManager.instance.battleObj.transform.Find("Wave").gameObject.SetActive(true);
+
+        BattleManager.instance.battleObj.transform.Find("Wave/Select/WaveNotice").GetComponent<UILabel>().text = "Stage " + waveCount;
+        BattleManager.instance.battleObj.transform.Find("Wave/Select/WaveNotice").GetComponent<TweenAlpha>().ResetToBeginning();
+        ProcessButton.instance.ResetTweenComponentsInChildren(BattleManager.instance.battleObj.transform.Find("Wave").gameObject);
+
+        player player = BattleManager.instance.GetPlayerbyBattle(true);
+        player enemyplayer = BattleManager.instance.GetPlayerbyBattle(false);
+        for (int i = 0; i < 15; ++i)
+        {
+            if (player.tile_character[i] != null)
+            {
+                player.tile_character[i].GetComponent<Character>().CCState.Clear();
+                player.dpsData[i].Init();
+            }
+
+            if (enemyplayer.tile_character[i] != null)
+            {
+                enemyplayer.tile_character[i].GetComponent<Character>().CCState.Clear();
+                enemyplayer.dpsData[i].Init();
+            }
+        }
+
+
+        int BossWaveItv = 10;
+        if (isAwakeMode)
+            BossWaveItv = 5;
+
+        if (waveCount <= (BossWaveItv * 5) || 
+            (isAwakeMode == true && waveCount <= 30))
+        {
+            if (waveCount % BossWaveItv != 0)
+                ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareWaveStart, "", 0, 0.0f);
+            else
+                ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareBossSpawn, "", 0, 0.0f);
+        }
+        else
+        {
+            if(isAwakeMode)
+            {
+                if (waveCount % 2 != 0)
+                    ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareWaveStart, "", 0, 0.0f);
+                else
+                {
+                    ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareBossSpawn, "", 0, 0.0f);
+                }
+            }
+            else
+            {
+                if (waveCount % 2 != 0)
+                    ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareWaveStart, "", 0, 0.0f);
+                else
+                {
+                    ProcessButton.instance.DelaySendServerTCP(Totalpacket_type_battle.pt_PrepareBossSpawn, "", 0, 0.0f);
+                }
+            }
+        }
+
+        int rageOnWave = 0;
+        if (monstergenerate.instance.isAwakeCoopMode)
+            rageOnWave = int.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.AwakeCoop_RageMode, (int)GameDataManager.systemDataTemplate_.value1]);
+        else
+            rageOnWave = int.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.Coop_RageMode, (int)GameDataManager.systemDataTemplate_.value1]);
+        if (waveCount == rageOnWave)
+        {
+            SoundManager.Instance.Play(SoundType.SE_Siren);
+            monstergenerate.instance.isRageMode = true;
+            GameObject warningObj = ObjectPoolManager.instance.GetPrefab("Warning", player.transform);
+            float warningDealy = 2.0f;
+            Destroy(warningObj, warningDealy);
+            yield return new WaitForSeconds(warningDealy);
+        }
+    }
+
+    public void delaychangestage(stage_type type, float time, string actionvalue = "")
+    {
+        StartCoroutine(delaychangestage_(type, time));
+    }
+
+    IEnumerator delaychangestage_(stage_type type, float time, string actionvalue = "")
+    {
+        yield return new WaitForSeconds(time);
+
+        changestage(type, 0, true);
+    }
+
+    IEnumerator Boss_Select_MonsterFieldCheck()
+    {
+        while(monstergenerate.instance.IsMonsterInField(true) || monstergenerate.instance.IsMonsterInField(false))
+            yield return null;
+
+        yield return new WaitForSecondsRT(0.5f); // 약간의 딜레이
+
+        GameObject bossselectobj = ProcessButton.instance.GetPrefabsBase("Dice/BossSelect", BattleManager.instance.battleObj.transform, false);
+        BattleManager.instance.nextBosskind = (Monster.boss_kind)BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.globalSeed, 1, (int)Monster.boss_kind.max);
+
+        int iIndex = (int)BattleManager.instance.nextBosskind - 1;
+
+        int bossselectgridcount = bossselectobj.transform.Find("Grid").transform.childCount;
+        for (int i = 0; i < bossselectgridcount; ++i)
+        {
+            GameObject bossgroup = bossselectobj.transform.Find("Grid").GetChild(i).gameObject;
+            for (int j = 0; j < (int)Monster.boss_kind.max - 1; ++j)
+            {
+                bossgroup.transform.GetChild(j).Find("Boss").GetComponent<UISprite>().spriteName = "Boss_0" + (((iIndex + j) % ((int)Monster.boss_kind.max - 1)) + 1) + "_Simple";
+            }
+        }
+        BattleManager.instance.battleObj.transform.Find("BossSelectFX/NextBossIcon").GetComponent<UISprite>().spriteName = "Boss_0" + (((iIndex + 0) % ((int)Monster.boss_kind.max - 1)) + 1);
+        Destroy(bossselectobj, 8.0f);
+
+        player player = BattleManager.instance.GetPlayerbyBattle(true);
+        player enemyplayer = BattleManager.instance.GetPlayerbyBattle(false);
+        for (int i = 0; i < 15; ++i)
+        {
+            if (player.tile_character[i] != null)
+            {
+                player.tile_character[i].GetComponent<Character>().CCState.Clear();
+                player.dpsData[i].Init();
+            }
+
+            if (enemyplayer.tile_character[i] != null)
+            {
+                enemyplayer.tile_character[i].GetComponent<Character>().CCState.Clear();
+                enemyplayer.dpsData[i].Init();
+            }
+        }
+
+        StartCoroutine(SoundManager.Instance.BGMFadeInOutSoundChange(SoundType.BGM_Battle, 0.1f));
+    }
+
+    public void updatetilediceinfo( bool isme )
+    {
+        for (int i = 0; i < 15; i++)
+        {
+            if (BattleManager.instance.GetPlayerbyBattle(isme).tile_character[i])
+            {
+                getcombattileobj( isme, i).transform.Find("Dice(Clone)/Character").GetComponent<UISprite>().spriteName 
+                    = GameManager.instance.GetDiceTemplate(BattleManager.instance.GetPlayerbyBattle(isme).tile_character[i].GetComponent<Character>().id, GameDataManager.diceTemplate_.icon);
+                getcombattileobj(isme, i).transform.Find("Dice(Clone)/Star").GetComponent<UISprite>().spriteName 
+                    = BattleManager.instance.GetPlayerbyBattle(isme).tile_character[i].GetComponent<Character>().GetStarGradeSpriteName();
+            }
+        }
+    }
+
+    public bool isPossiblePowerUp(int index)
+    {
+        bool result = false;
+
+        int PowerLv = my_player_me.deck_character[index].GetComponent<Character>().powUplevel;
+        if (PowerLv >= 5) return false;
+        int PowerLvUpPrice = 100;
+        for (int i = 0; i < PowerLv; ++i)
+            PowerLvUpPrice += (i) * 100;
+
+        if (my_player_me.sp_mysp < PowerLvUpPrice || isTCPReceivePowerUpDataWaiting == true)
+            result = false;
+        else
+            result = true;
+
+        return result;
+    }
+
+    public bool isTCPReceivePowerUpDataWaiting = false;
+    public bool StartPowUpNoUse = true;
+    public void onbutton(Button_type type, int value, bool isdrag = false, bool isCheckOver = false)
+    {
+        if (BattleManager.instance.isRuneSpawnComplete == false)
+            return;
+        switch (type)
+        {
+            case Button_type.attack:
+                {
+                    if (GetEmptyTileCharacterCount() == 0)
+                        return;
+                    if (my_player_me.sp_mysp >= my_player_me.sp_button)
+                    {
+                        for(int i = 0; i < 15; ++i)
+                        {
+                            if (my_player_me.TileIndexSendTCP[i] == true)
+                                return;
+                        }
+                        my_player_me.GainSP(-my_player_me.sp_button);
+                        StartPowUpNoUse = false;
+                        int getemptyslot = my_player_me.get_empty_tileindex();
+                        float probability = float.Parse(GameDataManager.SpawnOnRuneCorrect[16 - GetEmptyTileCharacterCount(), (int)GameDataManager.SpawnOnRuneCorrect_.probability]) / 10000.0f;
+                        float CheckValue = UnityEngine.Random.Range(0.0f, 1.0f);
+                        if (probability > CheckValue) //확률 당첨
+                        {
+                            if (GetEmptyRuneTileIndex() != -1)
+                            {
+                                if (GameManager.instance.IsLogDebuggingMode)
+                                {
+                                    GameObject LabelObj = ObjectPoolManager.instance.GetPrefab("NumberUp", Vector3.zero, 0);
+                                    LabelObj.transform.Find("Label").GetComponent<UILabel>().text = string.Format("[FF0000]룬 스폰 보정! 확률 {0}%[-]", (probability * 100.0f).ToString("N0"));
+                                    LabelObj.transform.Find("Label").GetComponent<TweenPosition>().enabled = false;
+                                    LabelObj.transform.Find("Label/Sprite").gameObject.SetActive(false);
+                                }
+
+                                getemptyslot = GetEmptyRuneTileIndex();
+                            }
+                        }
+                        else //당첨 안될경우 룬위에 올라가면 안된다.
+                        {
+                            getemptyslot = GetEmptyRuneTileIndex(true);
+                        }
+
+
+                        BattleManager.instance.addfx_notgrid(BattleManager.instance.battleObj.transform.Find("Attack").gameObject, "CombatButton_lv01", 1);
+                        my_player_me.TileIndexSendTCP[getemptyslot] = true;
+                        ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.ActionButton, getemptyslot.ToString());
+                    }
+                }
+                break;
+            case Button_type.deck_character_levelup:
+                {
+                    if (BattleManager.instance.SpecialSkillDragOnChaseObject)
+                    {
+                        BattleManager.instance.SpecialSkillDragOnChaseObject.transform.localPosition = Vector3.zero;
+                        BattleManager.instance.SpecialSkillDragOnChaseObject = null;
+                    }
+
+                    if (StartPowUpNoUse == true)
+                        return;
+
+                    if (my_player_me.deck_character[value].GetComponent<Character>().id > 0)
+                    {
+                        if (my_player_me.isSpecialSkill_FireReady[value] == true && 
+                            isdrag && 
+                            isTCPReceivePowerUpDataWaiting == false && isCheckOver) //TCP 다시 받을때까지 대기
+                        {
+                            SoundManager.Instance.Play(SoundType.Battle_SpecialSkill_KeyDown);
+                            ProcessButton.instance.SendServerTCP(Totalpacket_type_battle.FireSpecialSkill, value.ToString());
+                            isTCPReceivePowerUpDataWaiting = true;
+                        }
+                        else if (isPossiblePowerUp(value) && !isdrag && !isCheckOver)
+                        {
+                            isTCPReceivePowerUpDataWaiting = true;
+                            int PowerLv = my_player_me.deck_character[value].GetComponent<Character>().powUplevel;
+                            int PowerLvUpPrice = 100;
+                            for (int i = 0; i < PowerLv; ++i)
+                                PowerLvUpPrice += (i) * 100;
+                            SoundManager.Instance.Play(SoundType.Battle_PowerUp);
+                            my_player_me.GainSP(-PowerLvUpPrice); //서버에서 처리
+                            my_player_me.deck_character[value].GetComponent<Character>().powUplevel++;
+                            ProcessButton.instance.SendServerTCP2(Totalpacket_type_battle.PowerUp, value.ToString(), my_player_me.deck_character[value].GetComponent<Character>().powUplevel.ToString());
+                            
+                        }
+                    }
+                }
+                break;
+            case Button_type.finish1:
+                {
+                    if (resultobj)
+                    {
+                        if (stagetype == stage_type.finish)
+                        {
+                            if (GameManager.instance.client.isConnected())
+                                GameManager.instance.client.DisConnect();
+
+                            if (resultobj)
+                            {
+                                if (checkCount >= 1)
+                                {
+                                    string getHidden = "";
+                                    if (BattleManager.instance.HiddenHeroCount2.Count > 0)
+                                    {
+                                        foreach (var temp in BattleManager.instance.HiddenHeroCount2)
+                                            getHidden += temp.Key + "#" + temp.Value + "&";
+                                    }
+                                    ProcessButton.instance.sendtotalpacket3(Totalpacket_type.BattleRewardCardAddReward, waveCount.ToString(), checkCount.ToString(), getHidden);
+                                }
+                                else
+                                    ProcessButton.instance.sendtotalpacket(Totalpacket_type.BattleRewardCardAddReward, waveCount.ToString(), "0");
+                            }
+
+                            BattleManager.instance.release();
+                            Destroy(resultobj);
+                            ProcessButton.instance.DestroyObjects();
+
+                            GameManager.instance.isUILabelCountUp_UpdatePause = true;
+                            GameManager.instance.fUILabelCountUp_UpdateTime = 2.0f;
+                            monstergenerate.instance.close();
+                            missilemanager.instance.close();
+                            ProcessButton.instance.ChangeUI(ProcessButton.UI_STATE.lobby);
+                            NetworkManager.instance.SendGetUserData();
+                        }
+                    }
+                }
+                break;
+        }
+    }
+    public int GetEmptyTileCharacterCount()
+    {
+        int iCount = 0;
+        for (int i = 0; i < 15; ++i)
+        {
+            if (my_player_me.tile_character[i] != null || my_player_me.TileIndexSendTCP[i] == true) //빈타일만 검색
+                continue;
+            iCount++;
+        }
+       
+        return iCount;
+    }
+
+    public int GetEmptyRuneTileIndex(bool bReverse = false)
+    {
+        List<int> EmptyRuneTileIndexList = new List<int>();
+        List<int> NotEmptyRuneTileIndexList = new List<int>();
+        for (int i = 0; i < 15; ++i)
+        {
+            if (my_player_me.tile_character[i] != null || my_player_me.TileIndexSendTCP[i] == true) //빈타일만 검색
+                continue;
+
+            Transform RedRunTrans = getcombattileobj(true, i).transform.Find("RuneRed_floor(Clone)");
+            Transform YellowRunTrans = getcombattileobj(true, i).transform.Find("RuneYellow_floor(Clone)");
+            Transform BlueRunTrans = getcombattileobj(true, i).transform.Find("RuneBlue_floor(Clone)");
+
+            if (RedRunTrans)
+            {
+                EmptyRuneTileIndexList.Add(i);
+            }
+            else if (YellowRunTrans)
+            {
+                EmptyRuneTileIndexList.Add(i);
+            }
+            else if (BlueRunTrans)
+            {
+                EmptyRuneTileIndexList.Add(i);
+            }
+            else
+            {
+                NotEmptyRuneTileIndexList.Add(i);
+            }
+        }
+        if (bReverse == true)
+            return NotEmptyRuneTileIndexList[UnityEngine.Random.Range(0, NotEmptyRuneTileIndexList.Count)];
+
+        if (EmptyRuneTileIndexList.Count != 0)
+            return EmptyRuneTileIndexList[UnityEngine.Random.Range(0, EmptyRuneTileIndexList.Count)];
+        else
+            return -1;
+    }
+
+    public void updateDailyQuestInfo()
+    {
+        if (string.IsNullOrEmpty(my_player_me.nickname) || string.IsNullOrEmpty(my_player_you.nickname)) return;
+
+        string questData = ProcessButton.instance.userintdata(playerinfo.ST_characterdata_string.dailyQuestInfo);
+        string[] questDatas = questData.Split('#');
+        bool sendpacket = false;
+        string sendDailyQuestIndex = ((int)GameDataManager.DailyQuestIndex_.Play).ToString() + "#" + ((int)GameDataManager.DailyQuestIndex_.cooperatePlay).ToString() + "#";
+        string sendDailyQuestAdd = "1#1#";
+
+        if (BattleManager.instance.isFriendMatch)
+        {
+            sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.cooperatePlayWithFriend).ToString() + "#";
+            sendDailyQuestAdd += "1#";
+        }
+        else
+        {
+            sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.cooperatePlayNoFriend).ToString() + "#";
+            sendDailyQuestAdd += "1#";
+        }
+
+        bool human = false;
+        bool unhuman = false;
+        BattleManager.instance.makeStarQuest.Clear();
+        int curguidequestindex = (int)ProcessButton.instance.userintdata(playerinfo.ST_characterdata_int.curguidequestindex);
+        string questtype = GameDataManager.GuideQuest[(int)curguidequestindex, (int)GameDataManager.GuideQuest_.questtype];
+        if (questtype == ((int)GameDataManager.DailyQuestIndex_.makestar).ToString())
+        {
+            BattleManager.instance.makeStarQuest.Add(int.Parse(GameDataManager.GuideQuest[(int)curguidequestindex, (int)GameDataManager.GuideQuest_.needvalue]));
+        }
+        for (int j = 0; j < questDatas.Length; ++j)
+        {
+            if (string.IsNullOrEmpty(questDatas[j]) || questDatas[j] == "") continue;
+            string[] datas = questDatas[j].Split('*');
+
+            if (GameDataManager.DailyQuestRewardTemplate[int.Parse(datas[1]), (int)GameDataManager.DailyQuestRewardTemplate_.playType] == ((int)GameDataManager.DailyQuestIndex_.makestar).ToString())
+            {
+                BattleManager.instance.makeStarQuest.Add(int.Parse(GameDataManager.DailyQuestRewardTemplate[int.Parse(datas[1]), (int)GameDataManager.DailyQuestRewardTemplate_.needvalue]));
+            }
+            if (datas.Length < 4) continue;
+
+            for (int i = 0; i < 5; ++i)
+            {
+                if (my_player_me.deck_character[i].GetComponent<Character>().id.ToString() == datas[3])
+                {
+                    sendpacket = true;
+                    sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.withDice).ToString() + "#";
+                    sendDailyQuestAdd += "1#";
+                    break;
+                }
+            }
+            if (sendpacket) break;
+
+        }
+
+        for (int k = 0; k < 5; ++k)
+        {
+            string tribe = GameManager.instance.GetDiceTemplate(my_player_me.deck_character[k].GetComponent<Character>().id, GameDataManager.diceTemplate_.tribe);
+            if (tribe == "0")
+                human = true;
+            else
+                unhuman = true;
+        }
+        if (human)
+        {
+            sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.WithhumanDeck).ToString() + "#";
+            sendDailyQuestAdd += "1#";
+        }
+        if (unhuman)
+        {
+            sendDailyQuestIndex += ((int)GameDataManager.DailyQuestIndex_.WithunhumanDeck).ToString() + "#";
+            sendDailyQuestAdd += "1#";
+        }
+
+        ProcessButton.instance.sendtotalpacket(Totalpacket_type.questClear, sendDailyQuestIndex, sendDailyQuestAdd);
+    }
+}
