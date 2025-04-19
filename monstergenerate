@@ -1,0 +1,1681 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using System.Linq;
+using System;
+
+public class monstergenerate : MonoBehaviour {
+
+    public static monstergenerate instance = null;
+
+    List<Monster> playerTargetMonsterList = new List<Monster>();
+    List<Monster> enemyTargetMonsterList = new List<Monster>();
+
+    List<Monster> playerTargetMonsterList_TotalWalk = new List<Monster>();
+    List<Monster> playerTargetMonsterList_HP = new List<Monster>();
+    List<Monster> enemyTargetMonsterList_TotalWalk = new List<Monster>();
+    List<Monster> enemyTargetMonsterList_HP = new List<Monster>();
+
+    public List<Monster> PlayerTargetMonsterList { get { return playerTargetMonsterList; } }
+    public List<Monster> EnemyTargetMonsterList { get { return enemyTargetMonsterList; } }
+
+    void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+        else if (instance != this)
+        {
+            Destroy(gameObject);
+        }
+    }
+    void OnDestroy() { instance = null; }
+
+    private void Update()
+    {
+        playerTargetMonsterList = SetTargetMonsterList(true);
+        enemyTargetMonsterList = SetTargetMonsterList(false);
+
+        if (playerTargetMonsterList != null)
+        {
+            playerTargetMonsterList_TotalWalk = playerTargetMonsterList.OrderByDescending(x => x.totalwork).ToList();
+            playerTargetMonsterList_HP = playerTargetMonsterList.OrderByDescending(x => x.hp).ToList();
+        }
+        else
+        {
+            playerTargetMonsterList_TotalWalk.Clear();
+            playerTargetMonsterList_HP.Clear();
+        }
+
+        if (enemyTargetMonsterList != null)
+        {
+            enemyTargetMonsterList_TotalWalk = enemyTargetMonsterList.OrderByDescending(x => x.totalwork).ToList();
+            enemyTargetMonsterList_HP = enemyTargetMonsterList.OrderByDescending(x => x.hp).ToList();
+        }
+        else
+        {
+            enemyTargetMonsterList_TotalWalk.Clear();
+            enemyTargetMonsterList_HP.Clear();
+        }
+
+        if (GameManager.instance.IsLogDebuggingMode)
+        {
+            GameObject temp = findTopObject(true, 0);
+            temp = findTopObject(false, 0);
+
+            temp = findmonster_maxhp(true);
+            temp = findmonster_maxhp(false);
+        }
+    }
+
+    public void close()
+    {
+        ObjectPoolManager.instance.ClearMonsterPool();
+
+        if (playerTargetMonsterList != null)
+            playerTargetMonsterList.Clear();
+        if (enemyTargetMonsterList != null)
+            enemyTargetMonsterList.Clear();
+
+        if (playerTargetMonsterList_TotalWalk != null)
+            playerTargetMonsterList_TotalWalk.Clear();
+        if (playerTargetMonsterList_HP != null)
+            playerTargetMonsterList_HP.Clear();
+        if (enemyTargetMonsterList_TotalWalk != null)
+            enemyTargetMonsterList_TotalWalk.Clear();
+        if (enemyTargetMonsterList_HP != null)
+            enemyTargetMonsterList_HP.Clear();
+    }
+
+    IEnumerator delaySpawnMonster(bool isme, int id, long hp, int rewardsp, int damage, float time, int i, bool isAutoGen = true)
+    {
+        yield return new WaitForSeconds(time);
+
+        if (isme)
+        {
+            SpawnCountList[0]++;
+            GameObject monster = SpawnMonster(isme, id, SpawnCountList[0], hp, rewardsp, isAutoGen);
+            SpawnTotalCountPlayer++;
+            monster.GetComponent<Monster>().damage = damage;
+
+            if (i < 0)
+            {//boss
+                Vector3 vSpawnPosition = BattleManager.instance.battleObj.transform.Find("Player/BossRespawn").transform.position;
+                Vector3 vCombackPosition = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone").gameObject.transform.position;
+                GameManager.instance.myBossSpawn = GameManager.instance.BossHPIncreaseReaction(monster, vSpawnPosition, vCombackPosition);
+                StartCoroutine(GameManager.instance.myBossSpawn);
+            }
+        }
+        else
+        {
+            SpawnCountList_CoopEnemy[0]++;
+            GameObject monster = SpawnMonster(isme, id, SpawnCountList_CoopEnemy[0], hp, rewardsp, isAutoGen);
+            SpawnTotalCountEnemy++;
+            monster.GetComponent<Monster>().damage = damage;
+
+            if (i < 0)
+            {//boss
+                Vector3 vSpawnPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/BossRespawn").transform.position;
+                Vector3 vCombackPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/MonsterZone").gameObject.transform.position;
+                GameManager.instance.enemyBossSpawn = GameManager.instance.BossHPIncreaseReactionEnemy(monster, vSpawnPositionEnemy, vCombackPositionEnemy);
+                StartCoroutine(GameManager.instance.enemyBossSpawn);
+            }
+        }
+    }
+
+    public GameObject SpawnMonster(bool isme, int id, int indexid, long hp, int rewardsp, bool isAutoGen = true, int input_maxHP = 0, bool bPlayTweener = true)
+    {
+        GameObject monster = null;
+        ObjectPoolManager.RappingMonsterObject RappingObj = ObjectPoolManager.instance.GetMonsterPrefab(isme, id);
+        monster = RappingObj.obj;
+        Monster mon = RappingObj.monster;
+        mon.SpawnMonster(true, isme, id, hp, rewardsp, indexid, isAutoGen, input_maxHP, bPlayTweener);
+        ObjectPoolManager.instance.AddMonsterList(isme, mon);
+        mon.gameObject.SetActive(true);
+        Vector3 vSpawnPosition = Vector3.zero;
+
+        return monster;
+    }
+
+    public string TimeStream()
+    {
+        string retVal = "";
+
+        retVal += StartSpawnTime + "#" + SpawnTotalCount + "#" + SpawnTotalCountPlayer + "#" + SpawnTotalCountEnemy + "#" + WaveDefaultHP + "#" + WaveCount + "#" + WaveTime + "#" + LastSpawndMonsterHP;
+        retVal += "#";
+        for (int i = 0; i < (int)playerinfo.monsterID.Max; ++i)
+        {
+            retVal += SpawnCountList[i];
+            if (BattleManager.instance.battle_type == BattleManager.battletype.coop)
+            {
+                retVal += "`" + SpawnCountList_CoopEnemy[i];
+            }
+            retVal += "&";
+        }
+            
+        retVal += "#";
+        for (int i = 0; i < 3; ++i)
+            retVal += SpawnMonsterTime[i] + "&";
+        retVal += "#" + SpawnCount;
+        return retVal;
+    }
+
+    public float[] SpawnMonsterTime = new float[3];
+    public float StartSpawnTime = 9999.0f;
+    public int CurrentMode = 0;
+    public int SpawnTotalCount = 0;
+    public int SpawnTotalCountPlayer = 0;     //전체 스폰된 카운트
+    public int SpawnTotalCountEnemy = 0;     //전체 스폰된 카운트
+    public int SpawnCount = 0;          //wave에서 스폰된 카운트
+    public int[] SpawnCountList = new int[(int)playerinfo.monsterID.Max + 1];
+    public int[] SpawnCountList_CoopEnemy = new int[(int)playerinfo.monsterID.Max + 1];
+    public int WaveDefaultHP = 0;
+    public int WaveCount = 0;
+    public float WaveTime = 0.0f;
+    public long LastSpawndMonsterHP = 0;
+    //Mode 1 : pvp,  2 : 협동전  3 : 랜덤  4: 튜토리얼 5: 토벌전 6: 각성협동전
+    public void Init(int Mode)
+    {
+        CurrentMode = Mode;
+        WaveCount = 0;
+        WaveTime = 0.0f;
+        SpawnCount = 0;
+        StartSpawnTime = 0;
+        for (int i = 0; i < (int)playerinfo.monsterID.Max; i++)
+        {
+            SpawnCountList[i] = 0;
+            SpawnCountList_CoopEnemy[i] = 0;
+        }
+
+        iSpawnStackCount_me = 0;
+        iSpawnStackCount_you = 0;
+        SpawnTotalCount = 0;
+        SpawnTotalCountPlayer = 0;
+        SpawnTotalCountEnemy = 0;
+        WaveDefaultHP = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(CurrentMode, GameDataManager.monsterGeneratorTemplate_.DefaultHp));
+        LastSpawndMonsterHP = WaveDefaultHP;
+
+        isRageMode = false;
+        isAwakeCoopMode = false;
+    }
+
+    //웨이브 시작할때 초기화해주기
+    public void InitSpawnTime()
+    {
+        int startindex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString());
+        SpawnMonsterTime[0] = 0;
+        for(int i = 1; i < 3; ++i)
+        {
+            int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + i;
+
+            float SpawnTickTime = (int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Interval_Second)) - int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.NextSpawnDecreaseTime)) * (WaveCount - 1)) / 1000.0f;
+            float MaxNextTime = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MaxNextSpawnDecreaseTime)) / 1000.0f;
+            if (SpawnTickTime < MaxNextTime)
+                SpawnTickTime = MaxNextTime;
+
+            SpawnMonsterTime[i] = SpawnTickTime;
+        }
+        StartSpawnTime = 0;
+
+        iSpawnStackCount_me = 0;
+        iSpawnStackCount_you = 0;
+    }
+
+    //사각형만 출현시킨다
+    public void SpawnForce(bool isme = false)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString());
+
+        int spawnCount = SpawnCountList[(int)playerinfo.monsterID.rectMonster] - 1;
+        if (spawnCount <= 0)
+            spawnCount = 0;
+        long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[(int)playerinfo.monsterID.rectMonster], 0);
+        int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[(int)playerinfo.monsterID.rectMonster], 0);
+        //휴먼 언휴먼 처리 필요.
+        int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+        int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+
+        int wavebalanceTemplateID = WaveCount;
+        if (wavebalanceTemplateID > 20)
+            wavebalanceTemplateID = 20;
+        float SystemSpawnDelayTime = float.Parse(GameDataManager.WaveBalance[wavebalanceTemplateID, (int)GameDataManager.WaveBalance_.MonsterSpawnDelayTime]) / 1000.0f;
+
+
+        int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+        if(isme)
+        {
+            fSpawnDealyTime_me = SystemSpawnDelayTime;
+            GameObject playerMonster = SpawnMonster(true, monID, SpawnTotalCountPlayer, CalHP, CalSP, false);
+            SpawnTotalCountPlayer++;
+            int RandomDamage = 1;
+            playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+        else
+        {
+            fSpawnDealyTime_you = SystemSpawnDelayTime;
+            GameObject EnemyMonster = SpawnMonster(false, monID, SpawnTotalCountEnemy, CalHP, CalSP, false);
+            SpawnTotalCountEnemy++;
+            int RandomDamage = 1;
+            EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+    }
+
+
+    public IEnumerator SpawnBossForce(long addHP, long addEnemyHP)
+    {
+        SpawnBossForce(BattleManager.instance.nextBosskind, addHP, addEnemyHP);
+
+        if (isRageMode == false)
+            yield break;
+
+        yield return new WaitForSeconds(1.0f);
+
+        SpawnBossForce(BattleManager.instance.nextBosskind2, addHP, addEnemyHP);
+        yield return null;
+    }
+
+    //보스 출현시킨다
+    public void SpawnBossForce(Monster.boss_kind bossKind, long addHP, long addHP_Enemy)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + 2 + (int)bossKind;
+
+        long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+        int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+
+        //휴먼 언휴먼 처리 필요.
+        int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+        int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+        int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+
+        //짜피 보스때는 보스밖에 없으니 index = bossid
+        GameObject playerMonster = SpawnMonster(true, 3 + (int)bossKind, (3 + (int)bossKind) * 10000, CalHP + addHP, CalSP);
+        SpawnTotalCountPlayer++;
+        
+        int RandomDamage = 2;
+
+        if (BattleManager.instance.battle_type == BattleManager.battletype.pvp)
+        {
+            if (Battle_pvp.instance.my_player_me.castle == "1")
+            {
+                MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.UnHumanDamageMin));
+                MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.UnHumanDamageMax));
+            }
+            else
+            {
+                MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+                MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+            }
+            RandomDamage = BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.pvpBossHp, MinDamage, MaxDamage + 1);
+        }
+
+        playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        GameObject EnemyMonster = SpawnMonster(false, 3 + (int)bossKind, (3 + (int)bossKind) * 10000, CalHP + addHP_Enemy, CalSP);
+        SpawnTotalCountEnemy++;
+        RandomDamage = 2;
+        if (BattleManager.instance.battle_type == BattleManager.battletype.pvp)
+        {
+            if (Battle_pvp.instance.my_player_you.castle == "1")
+            {
+                MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.UnHumanDamageMin));
+                MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.UnHumanDamageMax));
+            }
+            else
+            {
+                MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+                MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+            }
+            RandomDamage = BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.pvpBossHpEnemy, MinDamage, MaxDamage + 1);
+        }
+
+        EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+
+        Vector3 vSpawnPosition = BattleManager.instance.battleObj.transform.Find("Player/BossRespawn").transform.position;
+        Vector3 vCombackPosition = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone").gameObject.transform.position;
+
+        Vector3 vSpawnPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/BossRespawn").transform.position;
+        Vector3 vCombackPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/MonsterZone").gameObject.transform.position;
+
+        StartCoroutine(GameManager.instance.BossHPIncreaseReaction(playerMonster, vSpawnPosition, vCombackPosition));
+        StartCoroutine(GameManager.instance.BossHPIncreaseReactionEnemy(EnemyMonster, vSpawnPositionEnemy, vCombackPositionEnemy));
+    }
+
+    public int findCoopBoss(bool isAwakeMode)
+    {
+        int index = (int)Monster.boss_kind.medusa;
+        for (Monster.boss_kind bossKind = Monster.boss_kind.medusa; bossKind < Monster.boss_kind.max; ++bossKind)
+        {
+            int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + 2 + (int)bossKind;
+
+            int SpawnWave = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SpawnWave));
+
+            int BossWaveItv = 10;
+            if (isAwakeMode)
+                BossWaveItv = 5;
+
+            if ((SpawnWave / BossWaveItv) == (WaveCount / BossWaveItv) + 1)
+            {
+                index = (int)bossKind;
+                break;
+            }
+        }
+        if (BattleManager.instance.nextBosskind == Monster.boss_kind.max || BattleManager.instance.nextBosskind == Monster.boss_kind.none)
+            BattleManager.instance.nextBosskind = Monster.boss_kind.medusa;
+
+        return index;
+    }
+    public IEnumerator SpawnBossForce_Coop()
+    {
+        SpawnBossForce_Coop(BattleManager.instance.nextBosskind);
+
+        if (isRageMode == false)
+            yield break;
+
+        yield return new WaitForSeconds(1.0f);
+
+        SpawnBossForce_Coop(BattleManager.instance.nextBosskind2);
+        yield return null;
+    }
+
+    public void SpawnBossForce_Coop(Monster.boss_kind bossKind)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + 2 + (int)bossKind;
+
+        long CalHP = CalculateHP_Coop(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+        int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+
+        int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+        int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+        int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+
+        int RandomDamage = 2;
+
+        if (BattleManager.instance.mySeedNumber == "1")
+        {
+            GameObject playerMonster = SpawnMonster(true, 3 + (int)bossKind, SpawnCountList[0], CalHP, CalSP);
+            SpawnTotalCountPlayer++;
+            SpawnCountList[0]++;
+            Monster mon = playerMonster.GetComponent<Monster>();
+            mon.damage = RandomDamage;
+            Vector3 vSpawnPosition = BattleManager.instance.battleObj.transform.Find("Player/BossRespawn").transform.position;
+            Vector3 vCombackPosition = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone").gameObject.transform.position;
+            GameManager.instance.myBossSpawn = GameManager.instance.BossHPIncreaseReaction(playerMonster, vSpawnPosition, vCombackPosition);
+            StartCoroutine(GameManager.instance.myBossSpawn);
+        }
+        else
+        {
+            StartCoroutine(delaySpawnMonster(true, 3 + (int)bossKind, CalHP, CalSP, RandomDamage, 0.5f, -1));
+        }
+
+        if (BattleManager.instance.mySeedNumber != "1")
+        {
+            GameObject EnemyMonster = SpawnMonster(false, 3 + (int)bossKind, SpawnCountList_CoopEnemy[0], CalHP, CalSP);
+            SpawnTotalCountEnemy++;
+            SpawnCountList_CoopEnemy[0]++;
+            Monster mon = EnemyMonster.GetComponent<Monster>();
+            mon.damage = RandomDamage;
+            Vector3 vSpawnPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/BossRespawn").transform.position;
+            Vector3 vCombackPositionEnemy = BattleManager.instance.battleObj.transform.Find("Enemmy/MonsterZone").gameObject.transform.position;
+            GameManager.instance.enemyBossSpawn = GameManager.instance.BossHPIncreaseReactionEnemy(EnemyMonster, vSpawnPositionEnemy, vCombackPositionEnemy);
+            StartCoroutine(GameManager.instance.enemyBossSpawn);
+        }
+        else
+        {
+            StartCoroutine(delaySpawnMonster(false, 3 + (int)bossKind, CalHP, CalSP, RandomDamage, 0.5f, -1));
+        }
+    }
+
+    public void SpawnBossForce_RandomTotalWar(Monster.boss_kind bossKind)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + 2 + (int)bossKind;
+
+        long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+        int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[2 + (int)bossKind], (int)(2 + (int)bossKind));
+
+        int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+        int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+        int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+
+        int RandomDamage = 1;
+
+        GameObject playerMonster = SpawnMonster(true, 3 + (int)BattleManager.instance.nextBosskind, SpawnTotalCountPlayer, CalHP, CalSP);
+        SpawnTotalCountPlayer++;
+        playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        Vector3 vSpawnPosition = BattleManager.instance.battleObj.transform.Find("BossSelectFX").transform.position;
+        Vector3 vCombackPosition = BattleManager.instance.battleObj.transform.Find("Player/MonsterZone").gameObject.transform.position;
+        StartCoroutine(GameManager.instance.BossHPIncreaseReaction(playerMonster, vSpawnPosition, vCombackPosition));
+    }
+
+    public void TutorialMonsterSpawn(int TutorialMosterCount)
+    {
+        if (TutorialMosterCount < (int)Battle_single.tagTutorialCount.Count_CharecterInfo)
+        {
+            GameObject playerMonster = SpawnMonster(true, 1, SpawnTotalCountPlayer, 10, 10, false);
+            SpawnTotalCountPlayer++;
+            int RandomDamage = 1;
+            playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+        else if (TutorialMosterCount < (int)Battle_single.tagTutorialCount.Count_Combine_Start)
+        {
+            GameObject playerMonster = SpawnMonster(true, 1, SpawnTotalCountPlayer, 300, 10, false);
+            SpawnTotalCountPlayer++;
+            int RandomDamage = 1;
+            playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+        else if (TutorialMosterCount == (int)Battle_single.tagTutorialCount.Count_Combine_Start)
+        {
+            GameObject playerMonster = SpawnMonster(true, 3, SpawnTotalCountPlayer, 1500, 10, false);
+            SpawnTotalCountPlayer++;
+            int RandomDamage = 1;
+            playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+        else
+        {
+            GameObject playerMonster = SpawnMonster(true, 1, SpawnTotalCountPlayer, 400, 10, false);
+            SpawnTotalCountPlayer++;
+            int RandomDamage = 1;
+            playerMonster.GetComponent<Monster>().damage = RandomDamage;
+        }
+    }
+
+    public bool isAwakeCoopMode = false;
+    public bool isRageMode = false;
+    public int iSpawnStackCount_me = 0;
+    public int iSpawnStackCount_you = 0;
+    public float fSpawnDealyTime_me = 0.0f;
+    public float fSpawnDealyTime_you = 0.0f;
+    public void SpawnProcess(float inputWaveTime)
+    {
+        float decreasWaveTime = int.Parse(GameDataManager.MonsterGeneratorTemplate[(int)playerinfo.RoomType.E_PVP, (int)GameDataManager.monsterGeneratorTemplate_.DecreaseWaveTime]) / 1000.0f;
+        float maxDecreaseWaveTime = int.Parse(GameDataManager.MonsterGeneratorTemplate[(int)playerinfo.RoomType.E_PVP, (int)GameDataManager.monsterGeneratorTemplate_.MaxDecreaseWaveTime]) / 1000.0f;
+        float DeafultWaveTime = float.Parse(GameDataManager.MonsterGeneratorTemplate[1, (int)GameDataManager.monsterGeneratorTemplate_.DefaultWaveTime]) / 1000.0f;
+        DeafultWaveTime -= ((WaveCount-1) * decreasWaveTime);
+
+        if(DeafultWaveTime < maxDecreaseWaveTime)
+            DeafultWaveTime = maxDecreaseWaveTime;
+
+        float FlowWaveTime = DeafultWaveTime - inputWaveTime;
+
+        for (int i = 0; i < 3; ++i)
+        {
+            if (FlowWaveTime + StartSpawnTime >= (int)SpawnMonsterTime[i])
+            {
+                SpawnCountList[i]++;
+                int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + i;
+
+                float SpawnTickTime = (int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Interval_Second)) - 
+                    int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.NextSpawnDecreaseTime)) * (WaveCount - 1)) / 1000.0f;
+                float MaxNextTime = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MaxNextSpawnDecreaseTime)) / 1000.0f;
+                if (SpawnTickTime < MaxNextTime)
+                    SpawnTickTime = MaxNextTime;
+
+                SpawnMonsterTime[i] += SpawnTickTime;
+
+                int spawnCountIndex = 0;
+                long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[spawnCountIndex], i);
+                if (i == 0)
+                    LastSpawndMonsterHP = CalHP;
+                int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[spawnCountIndex], i);
+                //휴먼 언휴먼 처리 필요.
+                int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+                int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+                int SpawnWave = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SpawnWave));
+                if (SpawnWave == 0 || SpawnWave == WaveCount)
+                {
+                    int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+                    if (BattleManager.instance.mySeedNumber == "1")
+                    {
+                        GameObject playerMonster = SpawnMonster(true, monID, (i + 1) * 10000 + SpawnCountList[i], CalHP, CalSP);
+                        SpawnTotalCountPlayer++;
+                        int RandomDamage = 1;
+                        playerMonster.GetComponent<Monster>().damage = RandomDamage;
+                        GameObject EnemyMonster = SpawnMonster(false, monID, (i + 1) * 10000 + SpawnCountList[i], CalHP, CalSP);
+                        SpawnTotalCountEnemy++;
+                        RandomDamage = 1;
+                        EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+                    }
+                    else
+                    {
+                        GameObject EnemyMonster = SpawnMonster(false, monID, (i + 1) * 10000 + SpawnCountList[i], CalHP, CalSP);
+                        SpawnTotalCountEnemy++;
+                        int RandomDamage = 1;
+                        EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+                        GameObject playerMonster = SpawnMonster(true, monID, (i + 1) * 10000 +  SpawnCountList[i], CalHP, CalSP);
+                        SpawnTotalCountPlayer++;
+                        RandomDamage = 1;
+                        playerMonster.GetComponent<Monster>().damage = RandomDamage;
+                    }
+
+                    if (monID == 1)
+                    {
+                        SpawnCount++;
+                    }
+                }
+                else if(BattleManager.instance.battle_type == BattleManager.battletype.coop ||
+                    BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+                {
+                    SpawnCountList[i]++;
+                }
+            }
+        }
+
+        if (iSpawnStackCount_me > 0)
+        {
+            if(fSpawnDealyTime_me <= 0.0f)
+            {
+                SpawnForce(true);
+                iSpawnStackCount_me--;
+            }
+            else
+                fSpawnDealyTime_me -= Time.deltaTime;
+        }
+        if(iSpawnStackCount_you > 0)
+        {
+            if (fSpawnDealyTime_you <= 0.0f)
+            {
+                SpawnForce(false);
+                iSpawnStackCount_you--;
+            }
+            else
+                fSpawnDealyTime_you -= Time.deltaTime;
+        }
+    }
+    public void SpawnProcess_Punish()
+    {
+        int iSpawnMaxCount = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(CurrentMode, GameDataManager.monsterGeneratorTemplate_.WaveSpawnGeneralMonsterCount).Split('#')[0]);
+
+        if (WaveTime > SpawnMonsterTime[0])
+        {
+            WaveTime = 0.0f;
+
+            playerinfo.monsterID monID = playerinfo.monsterID.rectMonster;
+
+            long CalHP = CalculateHP_Coop(CurrentMode, WaveCount, SpawnCountList[0], (int)monID);
+            int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[0], (int)monID);
+
+            int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + (int)monID;
+            int SpawnWave = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SpawnWave));
+            SpawnMonsterTime[0] = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Interval_Second)) / 1000;
+            
+                GameObject playerMonster = SpawnMonster(true, MonsterTemplateIndex, SpawnCountList[0], CalHP, CalSP);
+                SpawnTotalCountPlayer++;
+                SpawnCountList[0]++;
+        }
+        WaveTime += Time.deltaTime;
+    }
+
+    public void SpawnProcess_Coop(bool isAwake)
+    {
+        /*
+         * 1초마다 10번 스폰.
+         * 중간보스나올때는 첫번째 스폰
+         * 원형나올때는 마지막에 스폰. 
+         * 10웨이브마다 스폰갯수 증가.
+         * 원형, 중보스 스폰숫자만큼 사각형 감소 한웨이브에 반드시 10마리 나온다.
+         *  ex) 15웨이브 시작할때 중간보스 첫번째 나오고 이후 사각형 7마리 스폰후 9번째 10번째는 사각현대신 원형 스폰한다.
+         * */
+
+        int iSpawnMaxCount = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(CurrentMode, GameDataManager.monsterGeneratorTemplate_.WaveSpawnGeneralMonsterCount).Split('#')[0]);
+        if (iSpawnMaxCount <= SpawnCountList[0] ||
+            iSpawnMaxCount <= SpawnCountList_CoopEnemy[0])
+        {
+            SpawnCountList[0] = iSpawnMaxCount;
+            SpawnCountList_CoopEnemy[0] = iSpawnMaxCount;
+            return;
+        }
+
+        if (WaveTime > SpawnMonsterTime[0])
+        {
+            WaveTime = 0.0f;
+
+            playerinfo.monsterID monID = playerinfo.monsterID.rectMonster;
+
+            if(isAwake)
+            {
+                if (WaveCount % 10 == 3 || WaveCount % 10 == 8 || (WaveCount > 30 && WaveCount % 2 == 0))
+                {
+                    int RectSpawnCount = 9 - (WaveCount / 10);
+                    if (SpawnCountList[0] == 0)
+                        monID = playerinfo.monsterID.SubBossMonster;
+                    else if (SpawnCountList[0] >= RectSpawnCount)
+                        monID = playerinfo.monsterID.circleMonster;
+                }
+            }
+            else
+            {
+                if (WaveCount % 10 == 5 || (WaveCount > 50 && WaveCount % 2 == 1))
+                {
+                    int RectSpawnCount = 9 - (WaveCount / 10);
+                    if (SpawnCountList[0] == 0)
+                        monID = playerinfo.monsterID.SubBossMonster;
+                    else if (SpawnCountList[0] >= RectSpawnCount)
+                        monID = playerinfo.monsterID.circleMonster;
+                }
+            }
+
+            long CalHP = CalculateHP_Coop(CurrentMode, WaveCount, SpawnCountList[0], (int)monID);
+            int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[0], (int)monID);
+
+            int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + (int)monID;
+            int SpawnWave = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SpawnWave));
+            SpawnMonsterTime[0] = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Interval_Second)) / 1000;
+            if (BattleManager.instance.mySeedNumber == "1")
+            {
+                GameObject playerMonster = SpawnMonster(true, (int)monID + 1, SpawnCountList[0], CalHP, CalSP);
+                SpawnTotalCountPlayer++;
+                int RandomDamage = 1;
+                playerMonster.GetComponent<Monster>().damage = RandomDamage;
+                RandomDamage = 1;
+                StartCoroutine(delaySpawnMonster(false, (int)monID + 1, CalHP, CalSP, RandomDamage, 0.5f, (int)monID + 1));
+                SpawnCountList[0]++;
+            }
+            else
+            {
+                GameObject EnemyMonster = SpawnMonster(false, (int)monID + 1, SpawnCountList_CoopEnemy[0], CalHP, CalSP);
+                int RandomDamage = 1;
+                SpawnTotalCountEnemy++;
+                SpawnCountList_CoopEnemy[(int)monID + 1]++;
+                EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+                RandomDamage = 1;
+                StartCoroutine(delaySpawnMonster(true, (int)monID + 1, CalHP, CalSP, RandomDamage, 0.5f, (int)monID + 1));
+                SpawnCountList_CoopEnemy[0]++;
+            }
+        }
+        WaveTime += Time.deltaTime;
+    }
+
+    //스프리더 몬스터는 나중에 리소스 생기면 만들예정
+
+    //방법 1. 현재 Monster 프리팹의 사각형 몬스터를 재활용. 생성이랑 소멸할때 스프라이트 셋팅을 하는방식 (성급에따라 몬스터가 달라지기떄문에(스케일이나 이펙트 등) 관리하기 힘듬)
+    //방법 2. Monster프리팹에 스프리더 몬스터를 추가한다. 
+    //방법 3. 스프리더 몬스터 프리팹을 새로 만든다. (스크립트도 새로 만들어야될듯) <- 2번이나 3번으로 할예정 프리팹 만든사람이랑 상의하고 제작
+    // 스프리더 몬스터 프리팹 기능 고려 사항
+    // - 성급에따라 크기나 모양이 다름.
+    // - 게임 모드에따라 모양이 다름.
+    //스프리더 공식
+    //협동전에서는 동그라미랑 동일
+    // CalSP * 4 * 성급
+
+    //대전에서는?? 1성 : 3배 2성 : 5배 3성 7배 4성 9배 5성 11배 6성 13배
+    // 3 + 2 * (성급 - 1);
+
+    public void SpawnEllune(bool isme, Vector3 spawnPosition, float fTotalwalk, int moveType)
+    {
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop ||
+            BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+        {
+            SpawnElluneMonster_Coop(isme, spawnPosition, fTotalwalk, moveType);
+        }
+        else if (BattleManager.instance.battle_type == BattleManager.battletype.pvp ||
+            BattleManager.instance.battle_type == BattleManager.battletype.single)
+        {
+            SpawnElluneMonster(isme, spawnPosition, fTotalwalk, moveType);
+        }
+    }
+
+    //협동
+    public void SpawnElluneMonster_Coop(bool isme, Vector3 spawnPosition, float fTotalwalk, int moveType)
+    {
+        long CalHP = CalculateHP_Coop(CurrentMode, WaveCount, SpawnCountList[0], (int)playerinfo.monsterID.rectMonster) / 3;
+        int CalSP = int.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.ElluneBattleData, (int)GameDataManager.systemDataTemplate_.value6]);
+
+        GameObject playerMonster = SpawnMonster(!isme, 1, SpawnTotalCountPlayer++, CalHP, CalSP, false);
+        playerMonster.transform.localPosition = spawnPosition;
+
+        Monster playerMon = playerMonster.GetComponent<Monster>();
+
+        playerMon.damage = 0;
+        playerMon.PrefabOnOff(0, false);
+        playerMon.PrefabOnOff_Spreader(1, true);
+        playerMon.isBonus = true;
+        playerMon.totalwork = fTotalwalk;
+        playerMon.movetype = moveType;
+        playerMon.MoveTypeCheck(moveType);
+    }
+
+    public void SpawnElluneMonster(bool isme, Vector3 spawnPosition, float fTotalwalk, int moveType)
+    {
+        long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[0], (int)playerinfo.monsterID.rectMonster);
+        int CalSP = 0;
+
+        GameObject enemyMonster = SpawnMonster(!isme, 1, SpawnTotalCountEnemy++, CalHP, CalSP, false);
+        enemyMonster.transform.localPosition = spawnPosition;
+        Monster enemyMon = enemyMonster.GetComponent<Monster>();
+        enemyMon.damage = 1;
+        enemyMon.totalwork = fTotalwalk;
+        enemyMon.movetype = moveType;
+        enemyMon.SetZombiePrefab();
+    }
+
+    public void SpawnSpreader(bool isme, int iStargrade)
+    {
+        float fDefalutHPIncreaseRatio = float.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.SpreaderData, (int)GameDataManager.systemDataTemplate_.value1]) / 10000.0f;
+        float fStargradeHPIncreaseRatio = float.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.SpreaderData, (int)GameDataManager.systemDataTemplate_.value2]) / 10000.0f;
+        float fSPIncreaseRatio = float.Parse(GameDataManager.SystemDataTemplate[(int)GameDataManager.systemDataTemplateID_.SpreaderData, (int)GameDataManager.systemDataTemplate_.value3]) / 10000.0f;
+
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop ||
+            BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+        {
+            SpawnSpreaderMonster_Coop(iStargrade, fSPIncreaseRatio);
+        }
+        else if(BattleManager.instance.battle_type == BattleManager.battletype.pvp ||
+            BattleManager.instance.battle_type == BattleManager.battletype.single)
+        {
+            SpawnSpreaderMonster(isme, iStargrade, fDefalutHPIncreaseRatio, fStargradeHPIncreaseRatio);
+        }
+    }
+    //협동
+    public void SpawnSpreaderMonster_Coop(int iStargrade, float fRatio = 4.0f)
+    {
+        long CalHP = CalculateHP_Coop(CurrentMode, WaveCount, SpawnCountList[0], (int)playerinfo.monsterID.rectMonster) / 2;
+        int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList[0], (int)playerinfo.monsterID.rectMonster);
+        CalSP = (int)(CalSP * fRatio * iStargrade);
+
+        GameObject playerMonster = SpawnMonster(true, 1, SpawnTotalCountPlayer++, CalHP, CalSP, false);
+        GameObject enemyMonster = SpawnMonster(false, 1, SpawnTotalCountEnemy++, CalHP, CalSP, false);
+
+        ObjectPoolManager.instance.GetPrefab("LightSummon", playerMonster.transform.position, 0);
+        ObjectPoolManager.instance.GetPrefab("LightSummon", enemyMonster.transform.position, 0);
+
+        Monster playerMon = playerMonster.GetComponent<Monster>();
+        Monster EnemyMon = enemyMonster.GetComponent<Monster>();
+
+        playerMon.damage = 0;
+        playerMon.PrefabOnOff(0, false);
+        playerMon.PrefabOnOff_Spreader(iStargrade, true);
+        playerMon.isBonus = true;
+        EnemyMon.damage = 0;
+        EnemyMon.PrefabOnOff(0, false);
+        EnemyMon.PrefabOnOff_Spreader(iStargrade, true);
+        EnemyMon.isBonus = true;
+    }
+
+    //대전 
+    // 3 + 2 * (성급 - 1);
+    public void SpawnSpreaderMonster(bool isme, int iStargrade, float fDefaultRatio = 3.0f, float fStargradeRatio = 2.0f)
+    {
+        long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList[0], (int)playerinfo.monsterID.rectMonster);
+        int CalSP = 0;
+
+        CalHP = CalHP * (long)(fDefaultRatio + fStargradeRatio * (iStargrade - 1));
+
+        GameObject enemyMonster = SpawnMonster(!isme, 1, SpawnTotalCountEnemy++, CalHP, CalSP, false);
+
+        ObjectPoolManager.instance.GetPrefab("DarkSummon", enemyMonster.transform.position, 0);
+
+        Monster EnemyMon = enemyMonster.GetComponent<Monster>();
+        EnemyMon.damage = 1;
+        EnemyMon.PrefabOnOff(0, false);
+        EnemyMon.PrefabOnOff_Spreader(iStargrade, true);
+    }
+
+    public void SpawnProcess_randomtotalwar()
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            if (WaveTime + StartSpawnTime > SpawnMonsterTime[i])
+            {
+                int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + i;
+                float SpawnTickTime = (int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Interval_Second)) - int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.NextSpawnDecreaseTime)) * (WaveCount - 1)) / 1000.0f;
+                float MaxNextTime = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MaxNextSpawnDecreaseTime)) / 1000.0f;
+                if (SpawnTickTime < MaxNextTime)
+                    SpawnTickTime = MaxNextTime;
+
+                SpawnMonsterTime[i] += SpawnTickTime;
+
+                if (int.Parse(GameManager.instance.GetMonsterGenerateTemplate(CurrentMode, GameDataManager.monsterGeneratorTemplate_.WaveSpawnGeneralMonsterCount).Split('#')[i]) <= SpawnCountList_CoopEnemy[i])
+                {
+                    continue;
+                }
+
+
+                int spawnCountIndex = 0;
+                if (i == (int)playerinfo.monsterID.SubBossMonster)
+                    spawnCountIndex = (int)playerinfo.monsterID.SubBossMonster;
+                long CalHP = CalculateHP(CurrentMode, WaveCount, SpawnCountList_CoopEnemy[spawnCountIndex], i + 1);
+                if (i == 0)
+                    LastSpawndMonsterHP = CalHP;
+                int CalSP = CalculateSP(CurrentMode, WaveCount, SpawnCountList_CoopEnemy[spawnCountIndex], i + 1);
+
+                int MinDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMin));
+                int MaxDamage = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HumanDamageMax));
+
+                int SpawnWave = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SpawnWave));
+                if (SpawnWave == 0 || SpawnWave == WaveCount)
+                {
+                    int monID = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.MonsterID));
+                    {
+                        GameObject EnemyMonster = SpawnMonster(false, i + 1, SpawnTotalCountEnemy, CalHP, CalSP);
+                        int RandomDamage = 1;
+                        SpawnTotalCountEnemy++;
+                        EnemyMonster.GetComponent<Monster>().damage = RandomDamage;
+
+                        RandomDamage = 1;
+                        SpawnCountList_CoopEnemy[i]++;
+                    }
+
+
+                    if (monID == 1)
+                    {
+                        SpawnCount++;
+                    }
+                }
+                else if (BattleManager.instance.battle_type == BattleManager.battletype.randomtotalwar)
+                {
+                    SpawnCountList_CoopEnemy[i]++;
+                    SpawnCountList[i]++;
+                }
+            }
+        }
+
+        WaveTime += Time.deltaTime;
+    }
+    public long CalculateHP_Coop(int Mode, int inputWaveCount, int inputSpawnCount, int MonsterID)
+    {
+        long CalHP = 0;
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(Mode.ToString()) + MonsterID;
+
+        int spawnIncreaseHP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex - MonsterID, GameDataManager.monsterTemplate_.Spawn_Increase_HP).Split('#')[0]);
+
+        long SpawnIncreaseHP = 0;
+
+        for (int i = 1; i <= ((inputWaveCount - 1) / 10); ++i)
+        {
+            SpawnIncreaseHP += i * (spawnIncreaseHP * 10);
+        }
+
+        int iCount = inputWaveCount % 10;
+        if(iCount == 0)
+            iCount = 10;
+
+        for (int i = 0; i < iCount; ++i)
+        {
+            SpawnIncreaseHP += (spawnIncreaseHP * (((inputWaveCount - 1) / 10) + 1));
+        }
+
+        CalHP = LastSpawndMonsterHP + SpawnIncreaseHP;
+        LastSpawndMonsterHP = CalHP;
+
+        switch ((playerinfo.monsterID)MonsterID)
+        {
+            case playerinfo.monsterID.rectMonster: //1배
+            case playerinfo.monsterID.circleMonster: //0.5배
+                CalHP = (long)(CalHP * float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HPRatio)) / 10000.0f);
+                break;
+            case playerinfo.monsterID.SubBossMonster: //5배 + 1.5배
+                {
+                    float fIncreaseRatio = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HPRatio)) / 10000.0f;
+                    fIncreaseRatio += 1.5f * (inputWaveCount / 10);
+                    CalHP = (long)(CalHP * fIncreaseRatio);
+                }
+                break;
+            case playerinfo.monsterID.Medusa: //HP*10 + HP * (1.5 * ((현재 웨이브 / 10) - 1))
+            case playerinfo.monsterID.Knight:
+            case playerinfo.monsterID.Beholder:
+            case playerinfo.monsterID.Magician:
+            case playerinfo.monsterID.Minotauros:
+                {
+                    float fIncreaseRatio = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HPRatio)) / 10000.0f;
+                    float fSpawnIncrease = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Increase_HP)) / 10000.0f;
+                    CalHP = (long)(CalHP * fIncreaseRatio) + (long)(CalHP * (fSpawnIncrease * ((inputWaveCount / 10) - 1)));
+                }
+                break;
+        }
+
+        return CalHP;
+    }
+
+    public long CalculateHP(int Mode, int inputWaveCount, int inputSpawnCount, int MonsterID)
+    {
+        long CalHP = 0;
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(Mode.ToString()) + MonsterID;
+        if ((int)playerinfo.monsterID.rectMonster <= MonsterID && MonsterID <= (int)playerinfo.monsterID.SubBossMonster)
+        {
+            float nextWaveIncreaseHP = float.Parse(GameManager.instance.GetMonsterGenerateTemplate(Mode, GameDataManager.monsterGeneratorTemplate_.Next_Wave_Increase_HP)) / 10000.0f;
+
+            List<string> spawnIncreaseHPList = GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex - MonsterID, GameDataManager.monsterTemplate_.Spawn_Increase_HP).Split('#').ToList();
+
+            if (WaveCount > 1) inputSpawnCount++;
+            int spawnhpIndex = WaveCount >= spawnIncreaseHPList.Count ? spawnIncreaseHPList.Count - 1 : WaveCount - 1;
+            long SpawnIncreaseHP = long.Parse(spawnIncreaseHPList[spawnhpIndex]) * (inputSpawnCount-1);
+
+            CalHP = WaveDefaultHP + SpawnIncreaseHP;
+            CalHP = (long)(CalHP * float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HPRatio)) / 10000.0f);
+        }
+        else        //보스일때
+        {
+            int DefaultHp = int.Parse(GameManager.instance.GetMonsterGenerateTemplate(CurrentMode, GameDataManager.monsterGeneratorTemplate_.DefaultHp));
+            float fHpRatio = float.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.HPRatio));
+            int SpawnIncreaseHP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Spawn_Increase_HP));
+
+            int waveAddValue = 0;
+            if (BattleManager.instance.battle_type == BattleManager.battletype.single ||
+                BattleManager.instance.battle_type == BattleManager.battletype.pvp)
+            {
+                for (int i = 0; i <= WaveCount; ++i)
+                {
+                    waveAddValue += i; //1, 3, 6, 10, 15, 21
+                }
+            }
+            else
+                waveAddValue = WaveCount;// { 50000*(현재 라운드) } + { 0.5*(잔여 몬스터의 HP의 합) }
+
+            CalHP = (long)(fHpRatio * waveAddValue);
+            if (BattleManager.instance.battle_type == BattleManager.battletype.randomtotalwar)
+            {
+                int per = 1;
+                for (int i = 0; i < WaveCount; ++i)
+                    per *= 2;
+
+                CalHP = (long)(fHpRatio * per);
+            }
+        }
+        return CalHP;
+    }
+    public int CalculateSP(int MonsterID)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(CurrentMode.ToString()) + MonsterID;
+        int CalSP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Default_DropSP));
+        CalSP += int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Wave_Increase_SP)) *
+            ((WaveCount - 1) / int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SP_Interval_Wave)));
+        int MaxSP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Max_SP));
+        if (CalSP > MaxSP && MaxSP != 0)
+            CalSP = MaxSP;
+
+        return CalSP;
+    }
+
+    public int CalculateSP(int Mode, int inputWaveCount, int inputSpawnCount, int MonsterID)
+    {
+        int MonsterTemplateIndex = GameManager.instance.GetMonsterGroupStartIndex(Mode.ToString()) + MonsterID;
+        int CalSP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Default_DropSP));
+        CalSP += int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Wave_Increase_SP)) *
+            ((WaveCount - 1) / int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.SP_Interval_Wave)));
+        int MaxSP = int.Parse(GameManager.instance.GetMonsterTemplate(MonsterTemplateIndex, GameDataManager.monsterTemplate_.Max_SP));
+        if (CalSP > MaxSP && MaxSP != 0)
+            CalSP = MaxSP;
+
+        return CalSP;
+    }
+
+    public GameObject findnotexistbuff( bool isme, BattleManager.bufftype buffid)
+    {
+        GameObject firstMonster = null;
+        List<Monster> sortedList = isme ? playerTargetMonsterList_TotalWalk : enemyTargetMonsterList_TotalWalk;
+        if (sortedList != null)
+        {
+            foreach (var mon in sortedList)
+            {
+                if (!mon.isfield) //죽어있다
+                    continue;
+
+                if (mon.existbuff(buffid) == true) //버프가 걸려있다
+                {
+                    if(firstMonster == null)
+                        firstMonster = mon.gameObject;
+                    continue;
+                }
+
+                return mon.gameObject;
+            }
+        }         
+
+        if (firstMonster != null)
+            return firstMonster;
+
+        return null;
+    }
+
+    public GameObject findMonsterByMonsterIndex(bool isme, int index)
+    {
+        List<Monster> monsterList = isme == true ? ObjectPoolManager.instance.playerMonsterList : ObjectPoolManager.instance.enemyMonsterList;
+
+        for (int i = 0; i < monsterList.Count; ++i)
+        {
+            Monster mon = monsterList[i];
+            if (mon.indexid == index && mon.isfield == true && mon.hp > 0)
+                return mon.gameObject;
+        }
+
+        return null;
+    }
+    public List<Monster> findmonster_random_multi(bool isme, int iCount, GameObject RemoveTargetobj)
+    {
+        bool bCoop = false;
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop ||
+            BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+            bCoop = true;
+
+        List<Monster> monsterList = new List<Monster>();
+        if (!bCoop)
+        {
+            monsterList = isme ? new List<Monster>(ObjectPoolManager.instance.playerMonsterList) : new List<Monster>(ObjectPoolManager.instance.enemyMonsterList);
+        }
+        else
+        {
+            monsterList = isme ? new List<Monster>(ObjectPoolManager.instance.playerMonsterList) : new List<Monster>(ObjectPoolManager.instance.enemyMonsterList);
+            List<Monster> enemyMonsterList = isme ? ObjectPoolManager.instance.enemyMonsterList : ObjectPoolManager.instance.playerMonsterList;
+            monsterList.AddRange(enemyMonsterList);
+        }
+
+        if (monsterList.Count <= 0) return null;
+
+        List<Monster> sortedList = new List<Monster>();
+        if (bCoop == false)
+        {
+            for (int i = 0; i < monsterList.Count; ++i)
+            {
+                Monster mon = monsterList[i];
+                if (mon == null)
+                    continue;
+                if (RemoveTargetobj == mon.gameObject)
+                    continue;
+                if (mon.isfield == false || mon.hp <= 0)
+                    continue;
+                sortedList.Add(monsterList[i]);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < monsterList.Count; ++i)
+            {
+                Monster mon = monsterList[i];
+                if (mon == null)
+                    continue;
+                if (RemoveTargetobj == mon.gameObject)
+                    continue;
+                if (mon.isfield == false || mon.hp <= 0 ||
+                    (isme == true && mon.isme == false && mon.isme_coop == false) ||
+                    (isme == false && mon.isme == true && mon.isme_coop == false))
+                    continue;
+                sortedList.Add(monsterList[i]);
+            }
+        }
+
+        if (sortedList.Count >= 2)
+        {
+            for (int i = 0; i < sortedList.Count; ++i)
+            {
+                int tempindex = 0;
+                if (isme)
+                    tempindex = BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.randomTargetObj, 1, sortedList.Count);
+                else
+                    tempindex = BattleManager.instance.getrandomnumber((int)playerinfo.eRandomSeed.randomTargetObjEnemy, 1, sortedList.Count);
+                Monster Temp = sortedList[tempindex];
+                sortedList[tempindex] = sortedList[0];
+                sortedList[0] = Temp;
+            }
+        }
+
+        if (sortedList.Count > iCount)
+            sortedList.RemoveRange(iCount, sortedList.Count - iCount);
+
+        return sortedList;
+    }
+
+    public bool IsMonsterInField(bool isme)
+    {
+        List<Monster> fieldmonsterlist = null;
+        if (isme)
+        {
+            if (PlayerTargetMonsterList != null)
+                fieldmonsterlist = new List<Monster>(PlayerTargetMonsterList);
+        }
+        else
+        {
+            if (EnemyTargetMonsterList != null)
+                fieldmonsterlist = new List<Monster>(EnemyTargetMonsterList);
+        }
+        if(fieldmonsterlist != null)
+        {
+
+            for (int i = 0; i < fieldmonsterlist.Count; ++i)
+            {
+                if (fieldmonsterlist[i].isfield == true)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    public GameObject findmonster_random(int seedindex, bool isme)
+    {
+        List<Monster> sortedList = isme ? playerTargetMonsterList : enemyTargetMonsterList;
+        if (sortedList != null)
+        {
+            int getindex = BattleManager.instance.getrandomnumber(seedindex, 0, sortedList.Count);
+
+            if (sortedList.Count > getindex)
+                return sortedList[getindex].gameObject;
+        }            
+
+        return null;
+    }
+
+    public GameObject findmonster_maxhp( bool isme)
+    {
+        List<Monster> sortedList = isme ? playerTargetMonsterList_HP : enemyTargetMonsterList_HP;
+        if (sortedList != null)
+        {
+            if (sortedList.Count > 0)
+                return sortedList[0].gameObject;
+        }            
+
+        return null;
+    }
+
+    public GameObject findTopObject(bool isme, int topindex)
+    {
+        List<Monster> sortedList = isme ? playerTargetMonsterList_TotalWalk : enemyTargetMonsterList_TotalWalk;
+        if (sortedList != null)
+        {
+            if (topindex < sortedList.Count)
+                return sortedList[topindex].gameObject;
+            else
+                return null;
+        }
+        else
+            return null;            
+    }
+
+    public void ClearFieldMonster_for_BossSpawn(out long TotalMonHP, out long TotalMonHP_Enemy)
+    {
+        TotalMonHP = 0;
+        TotalMonHP_Enemy = 0;
+        for (int i = 0; i < ObjectPoolManager.instance.PlayerMonsterPoolList.Count; ++i)
+        {
+            var item = ObjectPoolManager.instance.PlayerMonsterPoolList[i];
+
+            if (!item.obj.activeSelf)
+                continue;
+
+            Monster mon = item.monster;
+            mon.DestroyMonster(true);
+            item.obj.SetActive(false);
+
+            if (mon.hp > 0)
+                TotalMonHP += mon.hp;
+        }
+
+        for (int i = 0; i < ObjectPoolManager.instance.EnemyMonsterPoolList.Count; ++i)
+        {
+            var item = ObjectPoolManager.instance.EnemyMonsterPoolList[i];
+            {
+                if (!item.obj.activeSelf)
+                    continue;
+
+                Monster mon = item.monster;
+                mon.DestroyMonster(true);
+                item.obj.SetActive(false);
+
+                if (mon.hp > 0)
+                    TotalMonHP_Enemy += mon.hp;
+            }
+        }
+    }
+    public void destroymonster(bool isme, int monsterindex, int damage, string SenderID = "")
+    {
+        List<ObjectPoolManager.RappingMonsterObject> fieldmonsterlist = isme == true ? ObjectPoolManager.instance.PlayerMonsterPoolList : ObjectPoolManager.instance.EnemyMonsterPoolList;
+
+        if(damage > 0 && BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+        {
+            Battle_coop_ai.instance.changestage(Battle_coop_ai.stage_type.finish);
+        }
+        if (fieldmonsterlist.Count > 0)
+        {
+            foreach (var item in fieldmonsterlist)
+            {
+                if (!item.obj.activeSelf)
+                    continue;
+
+                if (item.monster.indexid == monsterindex)
+                {
+                    if (damage <= 0)
+                        ObjectPoolManager.instance.GetPrefab("MonsterDeath_lv01", item.obj.transform.position, 0);
+
+                    lock (lockobject)
+                    {
+                        if (BattleManager.instance.battle_type == BattleManager.battletype.pvp)
+                        {
+                            string monsterType = GameDataManager.MonsterTemplate[item.monster.id, (int)GameDataManager.monsterTemplate_.type];
+                            if (monsterType == "2" && SenderID != FileManager.id) return;
+                        }
+                        if (damage > 0)
+                        {
+                            item.monster.isEndPoint = true;
+                        }
+
+                        item.monster.DestroyMonster();
+                        item.obj.SetActive(false);
+
+                        if (BattleManager.instance.battle_type == BattleManager.battletype.single)
+                        {
+                            if (Battle_single.instance.stagetype == Battle_single.stage_type.bosstime)
+                            {
+                                int lasthp = BattleManager.instance.GetPlayerbyBattle(true).hp;
+                                if (lasthp <= damage)
+                                    Battle_single.instance.changestage(Battle_single.stage_type.finish);
+                                else if (item.monster.bosskind != Monster.boss_kind.none)
+                                    Battle_single.instance.changestage(Battle_single.stage_type.startwave);
+                            }
+                            Battle_single.instance.updateDeckDiceinfo();
+                        }
+                        if (BattleManager.instance.battle_type == BattleManager.battletype.punitiveWar)
+                            Battle_PunitiveWar.instance.iKillCount++;
+                        else if (BattleManager.instance.battle_type == BattleManager.battletype.randomtotalwar)
+                        {
+
+                        }
+                        else
+                        {
+                            if (Battle_pvp.instance.stagetype == Battle_pvp.stage_type.bosstime)
+                            {
+                                if (fieldmonsterlist.Count <= 0)
+                                {
+                                }
+                            }
+                        }
+
+                    }
+                }
+            }
+        }
+
+    }
+    System.Random rand = new System.Random();
+
+    public Dictionary<string, int> KillMonsterDict = new Dictionary<string, int>();
+    public void destroymonster(bool isme, GameObject obj, int heartBreak)
+    {
+        Monster mon = obj.GetComponent<Monster>();
+        string monsterType = ((int)mon.type).ToString();
+        string monsterID = mon.id.ToString();
+        bool bBattleIdle = false;
+        if (BattleManager.instance.battle_type == BattleManager.battletype.Idle)
+            bBattleIdle = true;
+        if(isme && monsterType == "1" && !bBattleIdle)
+            SoundManager.Instance.Play(SoundType.Battle_Minion_Die);
+
+        if(isme && monsterType == "2")
+        {
+            SoundType Boss_Voice = (SoundType)((int)205 + (int.Parse(monsterID) - 3));
+            if (Boss_Voice >= SoundType.Voice_Die_Medusa && Boss_Voice <= SoundType.Voice_Die_Minotaur)
+            {
+                SoundManager.Instance.Play(Boss_Voice);
+            }
+        }
+        switch (BattleManager.instance.battle_type)
+        {
+            case BattleManager.battletype.pvp:
+                {
+                    if (isme == true && mon.isAutoGen == true)
+                    {
+                        if (mon.hp <= 0)
+                            ProcessButton.instance.CheckEventMonster(monsterID);
+
+                        ProcessButton.instance.SendServerTCP5(Totalpacket_type_battle.killmonster, mon.indexid.ToString(), mon.rewardsp.ToString(), heartBreak.ToString(), monsterType, "1");
+
+                        if(BattleManager.instance.isSoloPlaying)
+                            iSpawnStackCount_you++;
+
+                    }
+                    else if(!isme)
+                    {
+                        if (BattleManager.instance.isSoloPlaying)
+                        {
+                            if (heartBreak <= 0)
+                            {
+                            }
+                            else
+                                BattleManager.instance.HeartBreak(heartBreak.ToString(), int.Parse(BattleManager.instance.GetPlayerbyBattle(isme).castle), isme);
+
+                            ProcessButton.instance.SendServerTCP5(Totalpacket_type_battle.killmonster, mon.indexid.ToString(), mon.rewardsp.ToString(), heartBreak.ToString(), monsterType, "0");
+                            iSpawnStackCount_me++;
+                        }
+                        else
+                            ProcessButton.instance.SendServerTCP5(Totalpacket_type_battle.killmonster, mon.indexid.ToString(), mon.rewardsp.ToString(), heartBreak.ToString(), monsterType, "0");
+                    }
+                    mon.DestroyMonster();
+                    obj.gameObject.SetActive(false);
+                    Battle_pvp.instance.UpdateDeckDicePowerUpState();
+                }
+                break;
+            case BattleManager.battletype.coop_ai:
+                {
+                    if (mon.hp <= 0)
+                        ProcessButton.instance.CheckEventMonster(monsterID);
+                    if (heartBreak > 0 && mon.hp > 0)
+                        Battle_coop_ai.instance.changestage(Battle_coop_ai.stage_type.finish);
+
+                    BattleManager.instance.GetPlayerbyBattle(true).GainSP(mon.rewardsp);
+                    BattleManager.instance.GetPlayerbyBattle(false).GainSP(mon.rewardsp);
+                    mon.DestroyMonster();
+                    obj.gameObject.SetActive(false);
+                    Battle_coop_ai.instance.UpdateDeckDicePowerUpState();
+                }
+                break;
+            case BattleManager.battletype.coop:
+                {
+                    if (mon.hp <= 0)
+                        ProcessButton.instance.CheckEventMonster(monsterID);
+
+                    ProcessButton.instance.SendServerTCP5(Totalpacket_type_battle.killmonsterMulti, mon.indexid.ToString(), mon.rewardsp.ToString(), heartBreak.ToString(), monsterType, mon.isme ? "1" : "0");
+
+                    if (heartBreak > 0)
+                        BattleManager.instance.willDie = true;
+
+                    mon.DestroyMonster();
+                    obj.gameObject.SetActive(false);
+                    Battle_coop.instance.UpdateDeckDicePowerUpState();
+                }
+                break;
+            case BattleManager.battletype.single:
+                {
+                    if (mon.hp <= 0 && isme)
+                        ProcessButton.instance.CheckEventMonster(monsterID);
+
+                    mon.DestroyMonster();
+                    obj.SetActive(false);
+
+                    if (BattleManager.instance.battle_type == BattleManager.battletype.single)
+                    {
+                        if (Battle_single.instance.stagetype == Battle_single.stage_type.bosstime)
+                        {
+                            int lasthp = BattleManager.instance.GetPlayerbyBattle(isme).hp;
+                            if (lasthp <= heartBreak)
+                                Battle_single.instance.changestage(Battle_single.stage_type.finish);
+                            else
+                            {
+                                bool isAllKillNormal = true;
+                                if (ObjectPoolManager.instance.EnemyMonsterPoolList.Count > 0)
+                                {
+                                    foreach (var item in ObjectPoolManager.instance.EnemyMonsterPoolList)
+                                    {
+                                        if (!item.obj.activeSelf)
+                                            continue;
+
+                                        if (item.monster.isfield && item.monster.hp > 0)
+                                        {
+                                            isAllKillNormal = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (ObjectPoolManager.instance.PlayerMonsterPoolList.Count > 0)
+                                {
+                                    foreach (var item in ObjectPoolManager.instance.PlayerMonsterPoolList)
+                                    {
+                                        if (!item.obj.activeSelf)
+                                            continue;
+
+                                        if (item.monster.isfield && item.monster.hp > 0)
+                                        {
+                                            isAllKillNormal = false;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (isAllKillNormal)
+                                    Battle_single.instance.changestage(Battle_single.stage_type.startwave);
+                            }
+                        }
+                        Battle_single.instance.updateDeckDiceinfo();
+                    }
+
+                    if (isme)
+                        iSpawnStackCount_you++;
+                    else
+                        iSpawnStackCount_me++;
+                    BattleManager.instance.GetPlayerbyBattle(isme).GainSP(mon.rewardsp);
+                    int castleType = int.Parse(BattleManager.instance.GetPlayerbyBattle(isme).castle);
+                    BattleManager.instance.HeartBreak(heartBreak.ToString(), castleType, isme);
+                    Battle_single.instance.UpdateDeckDicePowerUpState();
+                }
+                break;
+            case BattleManager.battletype.randomtotalwar:
+                {
+                    if (mon.hp > 0 && !isme)
+                    {
+                        Battle_RandomTotalWar.instance.isDamageWave = true;
+                    }
+                    if (!isme && mon.hp <= 0)
+                        BattleManager.instance.GetPlayerbyBattle(true).GainSP(mon.rewardsp);
+
+                    destroymonster(isme, mon.indexid, heartBreak);
+                    if (mon.hp <= 0)
+                    {
+                        ProcessButton.instance.CheckEventMonster(monsterID);
+                    }
+                    BattleManager.instance.HeartBreak(heartBreak.ToString(), 0, isme);
+                    Battle_RandomTotalWar.instance.UpdateDeckDicePowerUpState();
+                }
+                break;
+            case BattleManager.battletype.Idle:
+                {
+                    destroymonster(isme, mon.indexid, heartBreak);
+                }
+                break;
+            case BattleManager.battletype.punitiveWar:
+                {
+                    if(heartBreak > 0)
+                        Battle_PunitiveWar.instance.changestage(Battle_PunitiveWar.stage_type.finish, 3);
+                    destroymonster(isme, mon.indexid, heartBreak);
+                }
+                break;
+        }
+    }
+
+    public object lockobject = new object();
+
+    public string streams( bool isme )
+    {
+        string retval = "";
+
+        List<ObjectPoolManager.RappingMonsterObject> fieldmonsterlist = isme == true ? ObjectPoolManager.instance.PlayerMonsterPoolList : ObjectPoolManager.instance.EnemyMonsterPoolList;
+
+        for(int i = 0; i < fieldmonsterlist.Count; i++)
+        {
+            if (!fieldmonsterlist[i].obj.activeSelf)
+                continue;
+
+            Monster mon = fieldmonsterlist[i].monster;
+            
+            if (!mon.isfield && mon.bosskind == Monster.boss_kind.none) continue;
+
+            if (mon.bosskind != Monster.boss_kind.none)
+            {
+                bool makeSpawn = false;
+                if (isme && GameManager.instance.myBossSpawn != null)
+                {
+                    StopCoroutine(GameManager.instance.myBossSpawn);
+                    makeSpawn = true;
+                }
+                else if (!isme && GameManager.instance.enemyBossSpawn != null)
+                {
+                    StopCoroutine(GameManager.instance.enemyBossSpawn);
+                    makeSpawn = true;
+                }
+                if (makeSpawn)
+                {
+                    mon.GetComponent<Monster>().PrefabOnOff(mon.GetComponent<Monster>().id, true);
+
+                    mon.GetComponent<Monster>().isme_coop = false;
+                    mon.GetComponent<Monster>().movetype = 1;
+                    mon.GetComponent<Monster>().totalwork = 0.0f;
+                    transform.localPosition = Vector3.zero;
+
+                    mon.GetComponent<Monster>().hp = mon.GetComponent<Monster>().hp_max;
+                    mon.GetComponent<Monster>().isfield = true;
+                }
+            }
+            if (i == 0)
+                retval = retval + mon.stream();
+            else
+                retval = Util.MakeParamcomma(retval, mon.stream(), '^');
+        }
+
+        return retval;
+    }
+
+    public string streams_Hp(bool isme)
+    {
+        string retval = "";
+
+        var monsterList = new List<Monster>(ObjectPoolManager.instance.playerMonsterList);
+        monsterList.AddRange(ObjectPoolManager.instance.enemyMonsterList);
+
+        if (monsterList == null)
+            return retval;
+
+        bool bFirst = true;
+        foreach (var item in monsterList)
+        {
+            if (!item.isfield) continue;
+
+            if (bFirst)
+            {
+                retval = retval + item.stream_Hp();
+                bFirst = false;
+            }                
+            else
+                retval = Util.MakeParamcomma(retval, item.stream_Hp(), '^');
+        }
+
+        return retval;
+    }
+
+    public IEnumerator TutorialDeathMonster(GameObject obj, Vector3 vSpawnPosition, Vector3 vCombackPosition)
+    {
+        yield return new WaitForSeconds(3f);
+
+        GameObject trailobj = ProcessButton.instance.GetPrefabs("Combat/Tutorial5", false);
+  
+        trailobj.gameObject.SetActive(true);
+        trailobj.transform.localPosition = vSpawnPosition;
+
+        float t = 0.0f;
+        Vector3 p1 = Vector3.up * UnityEngine.Random.Range(-0.05f, 0.05f);
+        Vector3 p2 = Vector3.left * UnityEngine.Random.Range(-0.05f, -0.05f);
+
+        while (t < 1.0f)
+        {
+            trailobj.transform.position = ProcessButton.instance.CalculateCubicBezierPoint(
+                t,
+                trailobj.transform.position,
+                trailobj.transform.position + p1,
+                trailobj.transform.position + p2,
+                vCombackPosition);
+
+            t += Time.deltaTime;
+            yield return null;
+        }
+        
+        ObjectPoolManager.instance.GetPrefab("MonsterDeath_lv01", obj.transform.position, 0);
+
+        Destroy(trailobj);
+        obj.SetActive(false);
+        GameObject monster = monstergenerate.instance.SpawnMonster(false, 1, SpawnTotalCountEnemy, 100 + SpawnTotalCountEnemy * 10, 10);
+        monster.GetComponent<Monster>().damage = 1;
+
+        Battle_single.instance.tutorialCheckTime = DateTime.Now;
+        PlayerPrefs.SetInt("BattleTutorial" + FileManager.id, (int)Battle_single.tagTutorialBattle_New.Character_BattleReal_Intro3);
+        yield return null;
+    }
+    public GameObject FindMonsterByID(bool isme, int index)
+    {
+        List<Monster> monsterList = isme == true ? ObjectPoolManager.instance.playerMonsterList : ObjectPoolManager.instance.enemyMonsterList;
+
+        for (int i = 0; i < monsterList.Count; ++i)
+        {
+            Monster mon = monsterList[i];
+            if (mon.indexid == index)
+                return mon.gameObject;
+        }
+
+        return null;
+    }
+
+    private List<Monster> SetTargetMonsterList(bool isme)
+    {
+        bool bCoop = false;
+        if (BattleManager.instance.battle_type == BattleManager.battletype.coop
+            || BattleManager.instance.battle_type == BattleManager.battletype.coop_ai)
+            bCoop = true;
+
+        List<Monster> monsterList = new List<Monster>();
+        if (!bCoop)
+        {
+            monsterList = null;
+            if (isme)
+            {
+                if (ObjectPoolManager.instance.playerMonsterList != null)
+                    monsterList = new List<Monster>(ObjectPoolManager.instance.playerMonsterList);
+            }
+            else
+            {
+                if (ObjectPoolManager.instance.enemyMonsterList != null)
+                    monsterList = new List<Monster>(ObjectPoolManager.instance.enemyMonsterList);
+            }
+        }
+        else
+        {
+            monsterList = null;
+            if (isme)
+            {
+                if (ObjectPoolManager.instance.playerMonsterList != null)
+                    monsterList = new List<Monster>(ObjectPoolManager.instance.playerMonsterList);
+            }
+            else
+            {
+                if (ObjectPoolManager.instance.enemyMonsterList != null)
+                    monsterList = new List<Monster>(ObjectPoolManager.instance.enemyMonsterList);
+            }
+            List<Monster> enemyMonsterList = isme ? ObjectPoolManager.instance.enemyMonsterList : ObjectPoolManager.instance.playerMonsterList;
+
+            if (enemyMonsterList == null ||
+                monsterList == null )
+                return null;
+
+            monsterList.AddRange(enemyMonsterList);
+        }
+
+        if (monsterList.Count <= 0) return null;
+
+        List<Monster> sortedList = new List<Monster>();
+        if (bCoop == false)
+        {
+            for (int i = 0; i < monsterList.Count; ++i)
+            {
+                Monster mon = monsterList[i];
+                if (mon == null)
+                    continue;
+                if (mon.isfield == false || mon.hp <= 0)
+                    continue;
+                sortedList.Add(monsterList[i]);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < monsterList.Count; ++i)
+            {
+                Monster mon = monsterList[i];
+                if (mon == null)
+                    continue;
+                if (mon.isfield == false || mon.hp <= 0 ||
+                    (isme == true && mon.isme == false && mon.isme_coop == false) ||
+                    (isme == false && mon.isme == true && mon.isme_coop == false))
+                    continue;
+                sortedList.Add(monsterList[i]);
+            }
+        }
+
+        return sortedList;
+    }
+}
